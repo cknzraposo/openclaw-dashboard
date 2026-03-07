@@ -1,105 +1,139 @@
-"""
-🪸 Percy Dashboard — Backend
-Real-time status dashboard for Percy (Percebe).
-"""
-
 import asyncio
 import base64
 import json
 import os
+import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
+import yaml
 from dotenv import load_dotenv
-load_dotenv()
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
+load_dotenv()
 
-app = FastAPI(title="Percy Dashboard")
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
+CONFIG_FILE = Path("config.yaml")
+NZ_TZ = ZoneInfo("Pacific/Auckland")
 START_TIME = time.time()
 
-# Global state — updated by background pollers, read by SSE
-state: dict = {
-    "spotify": {},
-    "yamaha": {},
-    "hue": {},
-    "backups": {},
-    "hypnos": {},
-    "hypnos_system": {},
-    "morpheus": {},
-    "bulletin": {},
-    "cron": [],
-    "percy": {},
+DEFAULT_CONFIG: dict[str, Any] = {
+    "agent": {"name": "Agent", "emoji": "🤖", "tagline": "Monitoring system status", "avatar": None, "theme": "bioluminescent"},
+    "spotify": {"enabled": False, "token_file": "~/.openclaw/credentials/spotify-tokens.json"},
+    "hue": {"enabled": False, "base_url": "http://your-hue-bridge/api/your-api-key", "groups": {}},
+    "yamaha": {"enabled": False, "base_url": "http://your-yamaha/YamahaExtendedControl/v1"},
+    "ollama": {"enabled": False, "base_url": "http://localhost:11434"},
+    "nas": {"enabled": False, "name": "NAS", "ssh_target": "", "media_paths": {}, "storage_paths": [], "media_sizes_gb": {}},
+    "backups": {"enabled": False, "log_file": "~/.openclaw/logs/backup.log", "warning_hours": 24, "critical_hours": 48, "hosts": []},
+    "logs": {"enabled": False, "files": {}},
+    "hosts": [],
+    "network_devices": [],
 }
+PANELS = ("spotify", "hue", "yamaha", "ollama", "nas", "backups", "logs")
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 
-SPOTIFY_TOKEN_FILE = Path(os.environ.get("SPOTIFY_TOKEN_FILE", Path.home() / ".percy/credentials/spotify-tokens.json"))
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def expand_env_vars(obj: Any) -> Any:
+    if isinstance(obj, str):
+        return re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), m.group(0)), obj)
+    if isinstance(obj, dict):
+        return {k: expand_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [expand_env_vars(v) for v in obj]
+    return obj
+
+
+def slugify(value: str) -> str:
+    text = re.sub(r"[^a-zA-Z0-9]+", "_", (value or "").strip().lower())
+    return re.sub(r"_+", "_", text).strip("_") or "host"
+
+
+def load_config() -> dict[str, Any]:
+    user = {}
+    if CONFIG_FILE.exists():
+        user = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    cfg = expand_env_vars(deep_merge(DEFAULT_CONFIG, user))
+
+    cfg["spotify"]["token_file"] = str(Path(cfg["spotify"]["token_file"]).expanduser())
+    cfg["backups"]["log_file"] = str(Path(cfg["backups"]["log_file"]).expanduser())
+    if cfg.get("logs", {}).get("enabled"):
+        for _, info in cfg["logs"].get("files", {}).items():
+            if info.get("path"):
+                info["path"] = str(Path(info["path"]).expanduser())
+
+    hosts = []
+    for host in cfg.get("hosts", []):
+        if not isinstance(host, dict) or not host.get("name"):
+            continue
+        h = dict(host)
+        h.setdefault("emoji", "🖥️")
+        h.setdefault("type", "local")
+        h.setdefault("tab", False)
+        h.setdefault("ollama", False)
+        h.setdefault("show_cron", False)
+        h.setdefault("enabled", True)
+        h.setdefault("projects_dir", "~/projects")
+        h.setdefault("project_descriptions", {})
+        h["slug"] = slugify(h["name"])
+        hosts.append(h)
+    cfg["hosts"] = hosts
+    return cfg
+
+
+CONFIG = load_config()
+SPOTIFY_TOKEN_FILE = Path(CONFIG["spotify"]["token_file"])
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+HUE_BASE = CONFIG["hue"].get("base_url", "")
+HUE_GROUPS = CONFIG["hue"].get("groups", {})
+YAMAHA_BASE = CONFIG["yamaha"].get("base_url", "")
+OLLAMA_BASE = CONFIG["ollama"].get("base_url", "")
+NAS_NAME = CONFIG["nas"].get("name", "NAS")
+NAS_TARGET = CONFIG["nas"].get("ssh_target", "")
+NAS_MEDIA = CONFIG["nas"].get("media_paths", {})
+NAS_STORAGE_PATHS = CONFIG["nas"].get("storage_paths", []) or list(NAS_MEDIA.values())
+NAS_MEDIA_SIZES = CONFIG["nas"].get("media_sizes_gb", {})
+BACKUP_LOG = Path(CONFIG["backups"]["log_file"])
+LOG_FILES = CONFIG["logs"].get("files", {}) if CONFIG.get("logs", {}).get("enabled") else {}
 
-HUE_BASE = os.environ.get("HUE_BASE", "http://your-hue-bridge/api/your-api-key")
-HUE_GROUPS = json.loads(os.environ.get("HUE_GROUPS", '{"1": "Room 1", "2": "Room 2"}'))
+app = FastAPI(title=f"{CONFIG['agent'].get('name', 'Agent')} Dashboard")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-HYPNOS_BASE = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-YAMAHA_BASE = os.environ.get("YAMAHA_BASE", "http://your-yamaha/YamahaExtendedControl/v1")
-GALACTICA_HOST = os.environ.get("NAS_SSH_TARGET", "user@your-nas")
-HYPNOS_HOST = os.environ.get("OLLAMA_HOST_IP", "localhost")
-HYPNOS_SSH_TARGET = os.environ.get("REMOTE_HOST_SSH", "user@your-remote-host")
-
-BACKUP_LOG = Path(os.environ.get("BACKUP_LOG", Path.home() / ".percy/logs/backup.log"))
-BULLETIN_PREP_LOG = Path(os.environ.get("BULLETIN_PREP_LOG", Path.home() / ".percy/logs/bulletin-prep.log"))
-BULLETIN_SEND_LOG = Path(os.environ.get("BULLETIN_SEND_LOG", Path.home() / ".percy/logs/bulletin-send.log"))
-HYPNOS_DRAFT_LOG_WINDOWS = os.environ.get("REMOTE_DRAFT_LOG", r"C:\xshare\bulletin-draft.log")
-
-LOG_FILES = {
-    "bulletin-prep": BULLETIN_PREP_LOG,
-    "bulletin-send": BULLETIN_SEND_LOG,
-    "backup": BACKUP_LOG,
-}
-
-NZ_TZ = ZoneInfo("Pacific/Auckland")
-
-# Percy status messages — rotated for flavour
-PERCY_QUIPS = [
-    "Clinging to the rocks, watching the tide 🌊",
-    "All barnacles present and accounted for 🪸",
-    "Filtering the data currents, one wave at a time",
-    "Settled in nicely — not going anywhere",
-    "The reef is calm. Systems nominal.",
-    "Doing what barnacles do best: holding on tight",
-    "Deep-sea vibes only 🫧",
-    "Monitoring the abyss. The abyss monitors back.",
-    "Reef report: all clear, all cozy",
-    "Another day on the rock. Life is good.",
-]
+state: dict[str, Any] = {"agent": {}, "spotify": {}, "hue": {}, "yamaha": {}, "ollama": {}, "backups": {}}
+for host in CONFIG.get("hosts", []):
+    state[f"host_{host['slug']}"] = {"status": "unknown", "name": host["name"], "message": "Waiting for telemetry"}
 
 _cache: dict[str, tuple[float, Any]] = {}
+_spotify_access_token: str | None = None
+_spotify_token_expiry = 0.0
+STATUS_MESSAGES = ["Monitoring telemetry streams", "Collecting host diagnostics", "Watching service health", "Keeping signals in sync"]
 
 
-def cache_get(key: str, max_age: float = 3600) -> Any | None:
-    if key in _cache:
-        ts, data = _cache[key]
-        if time.time() - ts < max_age:
-            return data
-    return None
+def cache_get(key: str, max_age: float) -> Any | None:
+    item = _cache.get(key)
+    if not item:
+        return None
+    ts, data = item
+    return data if time.time() - ts < max_age else None
 
 
 def cache_set(key: str, data: Any):
@@ -107,964 +141,374 @@ def cache_set(key: str, data: Any):
 
 
 async def ssh_command(target: str, command: str, timeout: int = 10) -> str | None:
-    """Run a command on an SSH target. Returns stdout or None on failure."""
+    if not target:
+        return None
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ssh",
-            "-o",
-            "ConnectTimeout=5",
-            "-o",
-            "StrictHostKeyChecking=no",
-            target,
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            "ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", target, command,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        if proc.returncode == 0:
-            return stdout.decode().strip()
-        return None
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return stdout.decode(errors="replace").strip() if proc.returncode == 0 else None
     except Exception:
         return None
 
 
-async def ssh_galactica(command: str, timeout: int = 10) -> str | None:
-    return await ssh_command(GALACTICA_HOST, command, timeout=timeout)
+def run_local(cmd: list[str], timeout: int = 5) -> tuple[int, str]:
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return out.returncode, (out.stdout + out.stderr).strip()
+    except Exception:
+        return 1, ""
 
 
-async def ssh_hypnos(command: str, timeout: int = 10) -> str | None:
-    return await ssh_command(HYPNOS_HOST, command, timeout=timeout)
-
-
-def _tail_local_log(path: Path, lines: int = 50) -> tuple[list[str], int]:
-    if not path.exists():
-        return [], 0
-    text = path.read_text()
-    all_lines = text.splitlines()
-    return all_lines[-lines:], len(all_lines)
-
-
-def _to_gb(size: str) -> float:
-    """Convert human-readable size strings like 1.8T/800G to GB."""
-    match = re.match(r"^\s*([\d.]+)\s*([KMGTP]?)B?\s*$", size.strip(), flags=re.I)
-    if not match:
-        return 0.0
-    value = float(match.group(1))
-    unit = match.group(2).upper()
-    multipliers = {
-        "": 1 / (1024**3),
-        "K": 1 / (1024**2),
-        "M": 1 / 1024,
-        "G": 1,
-        "T": 1024,
-        "P": 1024 * 1024,
-    }
-    return round(value * multipliers.get(unit, 1), 1)
-
-
-def _clean_tool_version(raw: str) -> str:
+def clean_version(raw: str) -> str:
     line = (raw or "").strip().splitlines()
     if not line:
         return "not found"
     value = line[0].strip()
-    patterns = (
-        r"^Python\s+",
-        r"^git version\s+",
-        r"^gh version\s+",
-        r"^jq-\s*",
-        r"^jq\s+",
-        r"^uv\s+",
-        r"^Running uvicorn\s+",
-        r"^GitHub Copilot CLI\s+",
-        r"^ollama version is\s+",
-        r"^v",
-    )
-    for pattern in patterns:
-        value = re.sub(pattern, "", value, flags=re.I)
+    for pat in (r"^Python\s+", r"^git version\s+", r"^gh version\s+", r"^jq-\s*", r"^jq\s+", r"^uv\s+", r"^v"):
+        value = re.sub(pat, "", value, flags=re.I)
     return value.split()[0] if " " in value else value
 
 
-def _run_local_command(cmd: list[str], timeout: int = 5) -> str:
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    return (result.stdout + result.stderr).strip()
-
-
-async def get_morpheus_system() -> dict[str, Any]:
-    cached = cache_get("morpheus_system", max_age=60)
-    if cached is not None:
-        return cached
-
-    with open("/proc/meminfo", encoding="utf-8") as f:
-        meminfo = f.read()
-
-    total_kb = int(re.search(r"MemTotal:\s+(\d+)", meminfo).group(1))
-    avail_kb = int(re.search(r"MemAvailable:\s+(\d+)", meminfo).group(1))
-    total_gb = round(total_kb / (1024 * 1024), 1)
-    used_gb = round((total_kb - avail_kb) / (1024 * 1024), 1)
-
-    disk = shutil.disk_usage("/")
-    disk_total_gb = round(disk.total / (1024**3), 1)
-    disk_used_gb = round(disk.used / (1024**3), 1)
-    disk_free_gb = round(disk.free / (1024**3), 1)
-
-    with open("/proc/uptime", encoding="utf-8") as f:
-        uptime_secs = float(f.read().split()[0])
-
-    tools: dict[str, str] = {}
-    tool_commands: dict[str, list[str]] = {
-        "Python": ["python3", "--version"],
-        "Node.js": ["node", "--version"],
-        "Git": ["git", "--version"],
-        "gh CLI": ["gh", "--version"],
-        "jq": ["jq", "--version"],
-        "uv": ["uv", "--version"],
-        "Copilot CLI": ["github-copilot", "--version"],
-        "uvicorn": ["uvicorn", "--version"],
-    }
-    for name, cmd in tool_commands.items():
-        try:
-            tools[name] = _clean_tool_version(_run_local_command(cmd))
-        except Exception:
-            tools[name] = "not found"
-
-    projects_dir = Path.home() / "projects"
-    project_meta = {
-        "percy": {"emoji": "🪸", "description": "Percy's website (percy.raposo.ai)"},
-        "percy-dashboard": {"emoji": "📊", "description": "This dashboard"},
-        "lydiard": {"emoji": "📖", "description": "Lydiard content site"},
-        "claw": {"emoji": "🔧", "description": "OpenClaw workspace"},
-    }
-    projects: list[dict[str, str]] = []
-    if projects_dir.exists():
-        for name in sorted([p.name for p in projects_dir.iterdir() if p.is_dir()], key=str.casefold):
-            meta = project_meta.get(name, {"emoji": "📁", "description": "Project workspace"})
-            projects.append({"name": name, "emoji": meta["emoji"], "description": meta["description"]})
-
-    try:
-        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
-        cron_count = len([l for l in result.stdout.strip().splitlines() if l.strip() and not l.startswith("#")])
-    except Exception:
-        cron_count = len(state.get("cron", []))
-
-    try:
-        wsl_ip = _run_local_command(["hostname", "-I"]).split()[0]
-    except Exception:
-        wsl_ip = "--"
-
-    try:
-        cron_service = "running" if subprocess.run(["pgrep", "-x", "cron"], capture_output=True, timeout=4).returncode == 0 else "stopped"
-    except Exception:
-        cron_service = "unknown"
-    try:
-        dashboard_service = (
-            "running"
-            if subprocess.run(["bash", "-lc", "ss -ltn | grep -q ':8080 '"], capture_output=True, timeout=4).returncode == 0
-            else "stopped"
-        )
-    except Exception:
-        dashboard_service = "unknown"
-    try:
-        ssh_forwarding = (
-            "active"
-            if subprocess.run(["bash", "-lc", r"ps -eo args | grep -E 'ssh .*(-L|-N)' | grep -v grep >/dev/null"], capture_output=True, timeout=4).returncode == 0
-            else "inactive"
-        )
-    except Exception:
-        ssh_forwarding = "unknown"
-
-    data = {
-        "status": "online",
-        "name": "MORPHEUS",
-        "os": "Ubuntu 24.04 LTS (WSL2)",
-        "kernel": os.uname().release,
-        "cpu": "Intel N95 (4 cores)",
-        "ram_total_gb": total_gb,
-        "ram_used_gb": used_gb,
-        "ram_free_gb": round(total_gb - used_gb, 1),
-        "disk_total_gb": disk_total_gb,
-        "disk_used_gb": disk_used_gb,
-        "disk_free_gb": disk_free_gb,
-        "lan_ip": os.environ.get("LAN_IP", "unknown"),
-        "wsl_ip": wsl_ip,
-        "uptime_seconds": uptime_secs,
-        "tools": tools,
-        "projects": projects,
-        "cron_count": cron_count,
-        "services": {
-            "cron": cron_service,
-            "percy_dashboard": dashboard_service,
-            "ssh_forwarding": ssh_forwarding,
-        },
-        "message": "MORPHEUS is humming along",
-    }
-    cache_set("morpheus_system", data)
-    return data
-
-
-async def get_hypnos_system() -> dict[str, Any]:
-    cached = cache_get("hypnos_system", max_age=60)
-    if cached is not None:
-        return cached
-
-    ps_script = (
-        "$ErrorActionPreference='SilentlyContinue';"
-        "$os=Get-CimInstance Win32_OperatingSystem;"
-        "$disk=Get-Volume -DriveLetter C;"
-        "$uptime=((Get-Date)-$os.LastBootUpTime).TotalSeconds;"
-        "$tools=@{};"
-        "$tools['Python']=(python --version) 2>&1;"
-        "$tools['PowerShell']=$PSVersionTable.PSVersion.ToString();"
-        "$tools['Git']=(git --version) 2>&1;"
-        "$tools['Node.js']=(node --version) 2>&1;"
-        "$tools['Ollama']=(ollama --version) 2>&1;"
-        "$tools['gh CLI']=(gh --version) 2>&1;"
-        "$tools['jq']=(jq --version) 2>&1;"
-        "$tools['uv']=(uv --version) 2>&1;"
-        "$projects=(Get-ChildItem -Directory C:\\clawprojects | Select-Object -ExpandProperty Name) -join '||';"
-        "$xshare=((Get-ChildItem C:\\xshare -ErrorAction SilentlyContinue | Measure-Object).Count);"
-        "Write-Output ('RAM_TOTAL_GB=' + [math]::Round($os.TotalVisibleMemorySize/1MB,1));"
-        "Write-Output ('RAM_FREE_GB=' + [math]::Round($os.FreePhysicalMemory/1MB,1));"
-        "Write-Output ('DISK_TOTAL_GB=' + [math]::Round($disk.Size/1GB,1));"
-        "Write-Output ('DISK_FREE_GB=' + [math]::Round($disk.SizeRemaining/1GB,1));"
-        "Write-Output ('UPTIME_SECONDS=' + [math]::Round($uptime,0));"
-        "Write-Output ('TOOLS_PYTHON=' + $tools['Python']);"
-        "Write-Output ('TOOLS_POWERSHELL=' + $tools['PowerShell']);"
-        "Write-Output ('TOOLS_GIT=' + $tools['Git']);"
-        "Write-Output ('TOOLS_NODE=' + $tools['Node.js']);"
-        "Write-Output ('TOOLS_OLLAMA=' + $tools['Ollama']);"
-        "Write-Output ('TOOLS_GH=' + $tools['gh CLI']);"
-        "Write-Output ('TOOLS_JQ=' + $tools['jq']);"
-        "Write-Output ('TOOLS_UV=' + $tools['uv']);"
-        "Write-Output ('PROJECTS=' + $projects);"
-        "Write-Output ('XSHARE_COUNT=' + $xshare);"
-    )
-    cmd = f'powershell -NoProfile -Command "{ps_script}"'
-    output = await ssh_command(HYPNOS_SSH_TARGET, cmd, timeout=20)
-    if output is None:
-        data = {
-            "status": "offline",
-            "message": "HYPNOS is offline — can't reach it",
-            "model": "Intel NUC11TNHi5",
-            "os": "Windows 11 Pro (Build 22000)",
-            "cpu": "11th Gen Intel i5-1135G7",
-            "ip": HYPNOS_HOST,
-            "tools": {},
-            "projects": [],
-        }
-        cache_set("hypnos_system", data)
-        return data
-
-    values: dict[str, str] = {}
-    for line in output.splitlines():
-        if "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        values[k.strip()] = v.strip()
-
-    def as_float(key: str, default: float = 0.0) -> float:
-        try:
-            return float(values.get(key, default))
-        except ValueError:
-            return default
-
-    tools = {
-        "Python": _clean_tool_version(values.get("TOOLS_PYTHON", "")),
-        "PowerShell": _clean_tool_version(values.get("TOOLS_POWERSHELL", "")),
-        "Git": _clean_tool_version(values.get("TOOLS_GIT", "")),
-        "Node.js": _clean_tool_version(values.get("TOOLS_NODE", "")),
-        "Ollama": _clean_tool_version(values.get("TOOLS_OLLAMA", "")),
-        "gh CLI": _clean_tool_version(values.get("TOOLS_GH", "")),
-        "jq": _clean_tool_version(values.get("TOOLS_JQ", "")),
-        "uv": _clean_tool_version(values.get("TOOLS_UV", "")),
-    }
-
-    project_meta = {
-        "bulletin": {"emoji": "📬", "description": "Weekly newsletter drafting pipeline"},
-        "coaching": {"emoji": "🏃", "description": "Coaching content processing"},
-        "lydiard": {"emoji": "📖", "description": "Lydiard lecture transcripts → markdown"},
-        "weekly": {"emoji": "📅", "description": "Weekly content processing"},
-        "xshare": {"emoji": "📁", "description": "Shared workspace"},
-    }
-    projects = []
-    raw_projects = values.get("PROJECTS", "")
-    for name in [p for p in raw_projects.split("||") if p.strip()]:
-        meta = project_meta.get(name, {"emoji": "📁", "description": "Project workspace"})
-        projects.append({"name": name, "emoji": meta["emoji"], "description": meta["description"]})
-
-    xshare_count = int(as_float("XSHARE_COUNT", 0))
-    if not any(p["name"] == "xshare" for p in projects):
-        projects.append(
-            {
-                "name": "xshare",
-                "emoji": "📁",
-                "description": f"Shared workspace ({xshare_count} items)",
-            }
-        )
-    else:
-        for p in projects:
-            if p["name"] == "xshare":
-                p["description"] = f"Shared workspace ({xshare_count} items)"
-
-    ram_total = as_float("RAM_TOTAL_GB", 64.0)
-    ram_free = as_float("RAM_FREE_GB", 0.0)
-    disk_total = as_float("DISK_TOTAL_GB", 223.0)
-    disk_free = as_float("DISK_FREE_GB", 0.0)
-    data = {
-        "status": "online",
-        "message": "HYPNOS is online and attentive",
-        "model": "Intel NUC11TNHi5",
-        "os": "Windows 11 Pro (Build 22000)",
-        "cpu": "11th Gen Intel i5-1135G7",
-        "ip": HYPNOS_HOST,
-        "ram_total_gb": ram_total,
-        "ram_used_gb": round(max(0.0, ram_total - ram_free), 1),
-        "ram_free_gb": round(ram_free, 1),
-        "disk_total_gb": disk_total,
-        "disk_used_gb": round(max(0.0, disk_total - disk_free), 1),
-        "disk_free_gb": round(disk_free, 1),
-        "uptime_seconds": as_float("UPTIME_SECONDS", 0.0),
-        "tools": tools,
-        "projects": sorted(projects, key=lambda p: p["name"].casefold()),
-        "xshare_count": xshare_count,
-    }
-    cache_set("hypnos_system", data)
-    return data
-
-# ---------------------------------------------------------------------------
-# Spotify token management
-# ---------------------------------------------------------------------------
-
-_spotify_access_token: str | None = None
-_spotify_token_expiry: float = 0
-
-
-async def _load_spotify_tokens() -> dict | None:
-    try:
-        data = json.loads(SPOTIFY_TOKEN_FILE.read_text())
-        return data
-    except Exception:
-        return None
-
-
-async def _save_spotify_tokens(data: dict) -> None:
-    try:
-        SPOTIFY_TOKEN_FILE.write_text(json.dumps(data, indent=2))
-    except Exception:
-        pass
-
-
-async def get_spotify_token() -> str | None:
+async def spotify_token() -> str | None:
     global _spotify_access_token, _spotify_token_expiry
-
     if _spotify_access_token and time.time() < _spotify_token_expiry - 60:
         return _spotify_access_token
-
-    tokens = await _load_spotify_tokens()
-    if not tokens or "refresh_token" not in tokens:
+    try:
+        tokens = json.loads(SPOTIFY_TOKEN_FILE.read_text(encoding="utf-8"))
+    except Exception:
         return None
-
-    # Try existing access token if present and not obviously expired
     if tokens.get("access_token") and tokens.get("expires_at", 0) > time.time() + 60:
         _spotify_access_token = tokens["access_token"]
         _spotify_token_expiry = tokens["expires_at"]
         return _spotify_access_token
-
-    # Refresh
-    creds = base64.b64encode(
-        f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()
-    ).decode()
+    if not tokens.get("refresh_token"):
+        return None
+    creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 "https://accounts.spotify.com/api/token",
-                headers={
-                    "Authorization": f"Basic {creds}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": tokens["refresh_token"],
-                },
+                headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]},
             )
             if resp.status_code != 200:
-                print(f"[spotify] Token refresh failed: {resp.status_code}")
                 return None
-            new_data = resp.json()
-            _spotify_access_token = new_data["access_token"]
-            _spotify_token_expiry = time.time() + new_data.get("expires_in", 3600)
-            save_data = {
+            data = resp.json()
+            _spotify_access_token = data["access_token"]
+            _spotify_token_expiry = time.time() + data.get("expires_in", 3600)
+            SPOTIFY_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SPOTIFY_TOKEN_FILE.write_text(json.dumps({
                 "access_token": _spotify_access_token,
-                "refresh_token": new_data.get("refresh_token", tokens["refresh_token"]),
+                "refresh_token": data.get("refresh_token", tokens["refresh_token"]),
                 "expires_at": _spotify_token_expiry,
-            }
-            await _save_spotify_tokens(save_data)
-            print("[spotify] Token refreshed")
+            }, indent=2), encoding="utf-8")
             return _spotify_access_token
-    except Exception as e:
-        print(f"[spotify] Token refresh error: {e}")
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Data collectors
-# ---------------------------------------------------------------------------
-
-
-async def poll_spotify():
-    """Poll Spotify now-playing every 5 seconds."""
-    while True:
-        try:
-            token = await get_spotify_token()
-            if not token:
-                state["spotify"] = {"status": "no_token", "message": "Can't reach Spotify — token issue"}
-            else:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get(
-                        "https://api.spotify.com/v1/me/player",
-                        headers={"Authorization": f"Bearer {token}"},
-                    )
-                    if resp.status_code == 204 or resp.status_code == 202:
-                        state["spotify"] = {"status": "idle", "message": "Nothing playing right now"}
-                    elif resp.status_code == 200:
-                        data = resp.json()
-                        item = data.get("item", {})
-                        artists = ", ".join(a["name"] for a in item.get("artists", []))
-                        track = item.get("name", "Unknown")
-                        album = item.get("album", {}).get("name", "")
-                        images = item.get("album", {}).get("images", [])
-                        art_url = images[0]["url"] if images else None
-                        device = data.get("device", {}).get("name", "somewhere")
-                        is_playing = data.get("is_playing", False)
-                        progress = data.get("progress_ms", 0)
-                        duration = item.get("duration_ms", 0)
-
-                        if is_playing:
-                            msg = f"{device} is playing {track} by {artists}"
-                        else:
-                            msg = f"Paused on {track} by {artists}"
-
-                        state["spotify"] = {
-                            "status": "playing" if is_playing else "paused",
-                            "track": track,
-                            "artist": artists,
-                            "album": album,
-                            "art_url": art_url,
-                            "device": device,
-                            "is_playing": is_playing,
-                            "progress_ms": progress,
-                            "duration_ms": duration,
-                            "message": msg,
-                        }
-                    else:
-                        state["spotify"] = {
-                            "status": "error",
-                            "message": f"Spotify hiccup (HTTP {resp.status_code})",
-                        }
-        except Exception as e:
-            print(f"[spotify] Error: {e}")
-            if not state.get("spotify"):
-                state["spotify"] = {"status": "error", "message": "Can't reach Spotify right now"}
-        await asyncio.sleep(5)
-
-
-async def poll_hue():
-    """Poll Hue Bridge every 10 seconds."""
-    while True:
-        rooms = {}
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                for group_id, room_name in HUE_GROUPS.items():
-                    try:
-                        resp = await client.get(f"{HUE_BASE}/groups/{group_id}")
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            action = data.get("action", {})
-                            is_on = action.get("on", False)
-                            bri = action.get("bri", 0)
-                            hue = action.get("hue", 0)
-                            sat = action.get("sat", 0)
-                            ct = action.get("ct", 0)
-                            colormode = action.get("colormode", "ct")
-                            scene = action.get("scene", None)
-
-                            # Brightness as percentage
-                            bri_pct = round(bri * 100 / 254) if is_on else 0
-
-                            rooms[group_id] = {
-                                "name": room_name,
-                                "on": is_on,
-                                "brightness": bri_pct,
-                                "hue": hue,
-                                "sat": sat,
-                                "ct": ct,
-                                "colormode": colormode,
-                                "scene": scene,
-                            }
-                        else:
-                            rooms[group_id] = {"name": room_name, "on": None, "error": True}
-                    except Exception:
-                        rooms[group_id] = {"name": room_name, "on": None, "error": True}
-            state["hue"] = {"status": "ok", "rooms": rooms}
-        except Exception as e:
-            print(f"[hue] Error: {e}")
-            if not state.get("hue", {}).get("rooms"):
-                state["hue"] = {"status": "offline", "rooms": {}, "message": "Can't reach the Hue Bridge"}
-        await asyncio.sleep(10)
-
-
-async def poll_yamaha():
-    """Poll Yamaha R-N402 every 10 seconds."""
-    while True:
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                status = await client.get(f"{YAMAHA_BASE}/main/getStatus")
-                if status.status_code == 200:
-                    data = status.json()
-                    state["yamaha"] = {
-                        "status": "online",
-                        "power": data.get("power", "unknown"),
-                        "volume": data.get("volume", 0),
-                        "max_volume": 80,
-                        "mute": data.get("mute", False),
-                        "input": data.get("input", "unknown"),
-                        "track": "",
-                        "artist": "",
-                        "album": "",
-                    }
-                    if data.get("input") in ("spotify", "net_radio", "server", "airplay"):
-                        play = await client.get(f"{YAMAHA_BASE}/netusb/getPlayInfo")
-                        if play.status_code == 200:
-                            pdata = play.json()
-                            state["yamaha"]["track"] = pdata.get("track", "")
-                            state["yamaha"]["artist"] = pdata.get("artist", "")
-                            state["yamaha"]["album"] = pdata.get("album", "")
-                else:
-                    state["yamaha"] = {"status": "offline", "message": "Yamaha offline"}
-        except Exception:
-            state["yamaha"] = {"status": "offline", "message": "Yamaha offline"}
-        await asyncio.sleep(10)
-
-
-async def poll_backups():
-    """Parse backup.log every 60 seconds."""
-    while True:
-        try:
-            entries = {}
-            if BACKUP_LOG.exists():
-                lines = BACKUP_LOG.read_text().strip().splitlines()
-                # Parse last lines for MORPHEUS and HYPNOS backup info
-                morpheus_time = None
-                hypnos_time = None
-                for line in reversed(lines):
-                    line_lower = line.lower()
-                    # Try to extract timestamp and host from log lines
-                    ts_match = re.search(
-                        r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)", line
-                    )
-                    if ts_match:
-                        ts_str = ts_match.group(1).replace("T", " ")
-                        try:
-                            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                        except ValueError:
-                            try:
-                                ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M")
-                            except ValueError:
-                                continue
-
-                        if "morpheus" in line_lower and not morpheus_time:
-                            morpheus_time = ts
-                        elif "hypnos" in line_lower and not hypnos_time:
-                            hypnos_time = ts
-                        elif not morpheus_time:
-                            # Default to morpheus if no host specified
-                            morpheus_time = ts
-
-                    if morpheus_time and hypnos_time:
-                        break
-
-                now = datetime.now()
-                for name, ts in [("MORPHEUS", morpheus_time), ("HYPNOS", hypnos_time)]:
-                    if ts:
-                        delta = now - ts
-                        hours = delta.total_seconds() / 3600
-                        if hours < 1:
-                            age_str = "less than an hour ago"
-                        elif hours < 24:
-                            age_str = f"{int(hours)} hours ago"
-                        elif hours < 48:
-                            age_str = "about a day ago"
-                        else:
-                            age_str = f"{int(hours / 24)} days ago"
-
-                        if hours < 24:
-                            health = "green"
-                            msg = f"Backed up {age_str}, all clean"
-                        elif hours < 48:
-                            health = "yellow"
-                            msg = f"Backed up {age_str} — getting stale"
-                        else:
-                            health = "red"
-                            msg = f"Last backup was {age_str} — needs attention"
-
-                        entries[name] = {
-                            "last_backup": ts.isoformat(),
-                            "hours_ago": round(hours, 1),
-                            "health": health,
-                            "message": msg,
-                        }
-                    else:
-                        entries[name] = {
-                            "last_backup": None,
-                            "health": "unknown",
-                            "message": f"No backup info found for {name}",
-                        }
-
-                state["backups"] = {"status": "ok", "hosts": entries}
-            else:
-                state["backups"] = {
-                    "status": "no_log",
-                    "hosts": {},
-                    "message": "Can't find the backup log",
-                }
-        except Exception as e:
-            print(f"[backups] Error: {e}")
-            if not state.get("backups", {}).get("hosts"):
-                state["backups"] = {"status": "error", "hosts": {}, "message": "Error reading backup log"}
-        await asyncio.sleep(60)
-
-
-async def poll_hypnos():
-    """Poll Ollama on HYPNOS every 30 seconds."""
-    while True:
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                # Get installed models
-                tags_resp = await client.get(f"{HYPNOS_BASE}/api/tags")
-                models = []
-                if tags_resp.status_code == 200:
-                    for m in tags_resp.json().get("models", []):
-                        size_gb = round(m.get("size", 0) / (1024**3), 1)
-                        models.append({
-                            "name": m.get("name", "?"),
-                            "size": f"{size_gb}GB",
-                            "size_bytes": m.get("size", 0),
-                            "modified": m.get("modified_at", ""),
-                        })
-
-                # Get running models
-                ps_resp = await client.get(f"{HYPNOS_BASE}/api/ps")
-                running = []
-                if ps_resp.status_code == 200:
-                    for m in ps_resp.json().get("models", []):
-                        running.append(m.get("name", "?"))
-
-                if running:
-                    msg = f"HYPNOS has {', '.join(running)} loaded and ready"
-                elif models:
-                    msg = f"HYPNOS is awake — {len(models)} models installed, none loaded"
-                else:
-                    msg = "HYPNOS is online but has no models"
-
-                state["hypnos"] = {
-                    "status": "online",
-                    "models": models,
-                    "running": running,
-                    "message": msg,
-                }
-        except Exception as e:
-            print(f"[hypnos] Error: {e}")
-            state["hypnos"] = {
-                "status": "offline",
-                "models": [],
-                "running": [],
-                "message": "HYPNOS is offline — can't reach it",
-            }
-        await asyncio.sleep(30)
-
-
-async def poll_morpheus_system():
-    while True:
-        try:
-            state["morpheus"] = await get_morpheus_system()
-        except Exception as e:
-            print(f"[morpheus] Error: {e}")
-            state["morpheus"] = {
-                "status": "error",
-                "message": "MORPHEUS is shy right now",
-            }
-        await asyncio.sleep(60)
-
-
-async def poll_hypnos_system():
-    while True:
-        try:
-            state["hypnos_system"] = await get_hypnos_system()
-        except Exception as e:
-            print(f"[hypnos-system] Error: {e}")
-            state["hypnos_system"] = {
-                "status": "offline",
-                "message": "HYPNOS is offline — can't reach it",
-            }
-        await asyncio.sleep(60)
-
-
-def _parse_log_last_entry(path: Path) -> dict | None:
-    """Extract timestamp and status from the last run block in a log file."""
-    if not path.exists():
-        return None
-    try:
-        text = path.read_text()
-        # Find all timestamp-like lines
-        timestamps = re.findall(
-            r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)", text
-        )
-        # Find status markers
-        has_success = bool(re.search(r"(?i)(success|complete|done|sent|finished)", text))
-        has_error = bool(re.search(r"(?i)(error|fail|exception)", text.split("\n")[-1] if text.strip() else ""))
-
-        last_ts = None
-        if timestamps:
-            ts_str = timestamps[-1].replace("T", " ")
-            try:
-                last_ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                try:
-                    last_ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M")
-                except ValueError:
-                    pass
-
-        status = "ok" if has_success and not has_error else ("error" if has_error else "unknown")
-        return {"timestamp": last_ts.isoformat() if last_ts else None, "status": status}
     except Exception:
         return None
 
 
-async def poll_bulletin():
-    """Parse bulletin log files every 60 seconds."""
-    while True:
-        try:
-            prep = _parse_log_last_entry(BULLETIN_PREP_LOG)
-            send = _parse_log_last_entry(BULLETIN_SEND_LOG)
-
-            prep_msg = "No prep runs found"
-            send_msg = "No sends found"
-
-            if prep and prep["timestamp"]:
-                ts = datetime.fromisoformat(prep["timestamp"])
-                delta = datetime.now() - ts
-                days = delta.days
-                if days == 0:
-                    prep_msg = f"Prepped today ({prep['status']})"
-                elif days == 1:
-                    prep_msg = f"Prepped yesterday ({prep['status']})"
-                else:
-                    prep_msg = f"Last prepped {days} days ago ({prep['status']})"
-
-            if send and send["timestamp"]:
-                ts = datetime.fromisoformat(send["timestamp"])
-                delta = datetime.now() - ts
-                days = delta.days
-                if days == 0:
-                    send_msg = f"Sent today ({send['status']})"
-                elif days == 1:
-                    send_msg = f"Sent yesterday ({send['status']})"
-                else:
-                    send_msg = f"Last sent {days} days ago ({send['status']})"
-
-            state["bulletin"] = {
-                "status": "ok",
-                "prep": prep,
-                "send": send,
-                "prep_message": prep_msg,
-                "send_message": send_msg,
-            }
-        except Exception as e:
-            print(f"[bulletin] Error: {e}")
-            if not state.get("bulletin"):
-                state["bulletin"] = {"status": "error", "message": "Can't read bulletin logs"}
-        await asyncio.sleep(60)
-
-
-def _parse_cron_expression(expr: str) -> str:
-    """Convert a cron expression to a human-readable description."""
-    parts = expr.strip().split()
-    if len(parts) < 5:
-        return expr
-
-    minute, hour, dom, month, dow = parts[:5]
-
-    days_map = {
-        "0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday",
-        "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday",
-    }
-    months_map = {
-        "1": "January", "2": "February", "3": "March", "4": "April",
-        "5": "May", "6": "June", "7": "July", "8": "August",
-        "9": "September", "10": "October", "11": "November", "12": "December",
-    }
-
-    def fmt_time(h: str, m: str) -> str:
-        try:
-            hi, mi = int(h), int(m)
-            period = "AM" if hi < 12 else "PM"
-            hi = hi % 12 or 12
-            return f"{hi}:{mi:02d} {period}"
-        except ValueError:
-            return f"{h}:{m}"
-
-    # Every minute
-    if minute == "*" and hour == "*" and dom == "*" and month == "*" and dow == "*":
-        return "Every minute"
-
-    # Every N minutes
-    if minute.startswith("*/") and hour == "*":
-        return f"Every {minute[2:]} minutes"
-
-    # Every N hours
-    if minute != "*" and hour.startswith("*/"):
-        return f"Every {hour[2:]} hours at :{minute.zfill(2)}"
-
-    # Specific time, every day
-    if minute != "*" and hour != "*" and dom == "*" and month == "*" and dow == "*":
-        return f"Every day at {fmt_time(hour, minute)}"
-
-    # Specific time on specific days of week
-    if minute != "*" and hour != "*" and dow != "*" and dom == "*":
-        if "-" in dow:
-            start, end = dow.split("-")
-            day_range = f"{days_map.get(start, start)}–{days_map.get(end, end)}"
-            return f"{day_range} at {fmt_time(hour, minute)}"
-        elif "," in dow:
-            day_list = ", ".join(days_map.get(d.strip(), d) for d in dow.split(","))
-            return f"{day_list} at {fmt_time(hour, minute)}"
+def parse_cron(lines: list[str]) -> list[dict[str, str]]:
+    rows = []
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("@"):
+            sch, cmd = (line.split(None, 1) + [""])[:2]
+            desc = "On system reboot" if sch == "@reboot" else sch
         else:
-            return f"Every {days_map.get(dow, f'day {dow}')} at {fmt_time(hour, minute)}"
-
-    # Specific day of month
-    if minute != "*" and hour != "*" and dom != "*" and dow == "*":
-        suffix = "th"
-        if dom.endswith("1") and dom != "11":
-            suffix = "st"
-        elif dom.endswith("2") and dom != "12":
-            suffix = "nd"
-        elif dom.endswith("3") and dom != "13":
-            suffix = "rd"
-        return f"On the {dom}{suffix} at {fmt_time(hour, minute)}"
-
-    # Reboot
-    if expr.strip().startswith("@reboot"):
-        return "On system reboot"
-
-    return expr
-
-
-def load_crontab():
-    """Load crontab entries once."""
-    try:
-        result = subprocess.run(
-            ["crontab", "-l"], capture_output=True, text=True, timeout=5
-        )
-        if result.returncode != 0:
-            state["cron"] = []
-            return
-
-        entries = []
-        for line in result.stdout.strip().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
+            parts = line.split(None, 5)
+            if len(parts) < 6:
                 continue
-
-            if line.startswith("@"):
-                # Handle @reboot etc.
-                parts = line.split(None, 1)
-                schedule = parts[0]
-                command = parts[1] if len(parts) > 1 else ""
-                description = _parse_cron_expression(line)
-            else:
-                parts = line.split(None, 5)
-                if len(parts) < 6:
-                    continue
-                schedule = " ".join(parts[:5])
-                command = parts[5]
-                description = _parse_cron_expression(schedule)
-
-            # Shorten command for display
-            cmd_short = command.strip()
-            if len(cmd_short) > 80:
-                cmd_short = cmd_short[:77] + "..."
-
-            entries.append({
-                "schedule": schedule,
-                "command": cmd_short,
-                "description": description,
-            })
-
-        state["cron"] = entries
-    except Exception as e:
-        print(f"[cron] Error: {e}")
-        state["cron"] = []
+            sch, cmd = " ".join(parts[:5]), parts[5]
+            desc = sch
+        rows.append({"schedule": sch, "command": cmd[:80], "description": desc})
+    return rows
 
 
-async def poll_percy():
-    """Update Percy status every 60 seconds."""
-    quip_index = 0
+def collect_projects_local(path: str, descriptions: dict[str, str]) -> list[dict[str, str]]:
+    base = Path(path).expanduser()
+    if not base.exists():
+        return []
+    return [{"name": p.name, "emoji": "📁", "description": descriptions.get(p.name, "Project workspace")} for p in sorted(base.iterdir(), key=lambda p: p.name.casefold()) if p.is_dir()]
+
+
+async def collect_projects_ssh(target: str, path: str, descriptions: dict[str, str]) -> list[dict[str, str]]:
+    out = await ssh_command(target, f"if [ -d {shlex.quote(path)} ]; then ls -1 {shlex.quote(path)}; fi", timeout=10)
+    if out is None:
+        return []
+    names = sorted([x.strip() for x in out.splitlines() if x.strip()], key=str.casefold)
+    return [{"name": name, "emoji": "📁", "description": descriptions.get(name, "Project workspace")} for name in names]
+
+
+async def collect_local_host(host: dict[str, Any]) -> dict[str, Any]:
+    key = f"host_{host['slug']}"
+    cached = cache_get(key, 60)
+    if cached is not None:
+        return cached
+    mem_total, mem_avail = 0, 0
+    try:
+        mem = Path("/proc/meminfo").read_text(encoding="utf-8")
+        mem_total = int(re.search(r"MemTotal:\s+(\d+)", mem).group(1))
+        mem_avail = int(re.search(r"MemAvailable:\s+(\d+)", mem).group(1))
+    except Exception:
+        pass
+    disk = shutil.disk_usage("/")
+    rc, ip_out = run_local(["hostname", "-I"])
+    ip = ip_out.split()[0] if rc == 0 and ip_out else "--"
+    uptime = 0.0
+    try:
+        uptime = float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])
+    except Exception:
+        pass
+    tools = {}
+    for name, cmd in {"Python": ["python3", "--version"], "Node.js": ["node", "--version"], "Git": ["git", "--version"], "gh CLI": ["gh", "--version"], "jq": ["jq", "--version"], "uv": ["uv", "--version"]}.items():
+        rc, out = run_local(cmd)
+        tools[name] = clean_version(out) if rc == 0 else "not found"
+    cron = []
+    if host.get("show_cron"):
+        rc, out = run_local(["crontab", "-l"])
+        cron = parse_cron(out.splitlines()) if rc == 0 else []
+    data = {
+        "status": "online", "name": host["name"], "os": platform.platform(), "kernel": platform.release(),
+        "cpu": platform.processor() or "unknown", "ip": ip, "uptime_seconds": uptime,
+        "ram_total_gb": round(mem_total / (1024 * 1024), 1) if mem_total else 0.0,
+        "ram_used_gb": round((mem_total - mem_avail) / (1024 * 1024), 1) if mem_total else 0.0,
+        "ram_free_gb": round(mem_avail / (1024 * 1024), 1) if mem_avail else 0.0,
+        "disk_total_gb": round(disk.total / (1024**3), 1), "disk_used_gb": round(disk.used / (1024**3), 1), "disk_free_gb": round(disk.free / (1024**3), 1),
+        "tools": tools, "projects": collect_projects_local(host["projects_dir"], host["project_descriptions"]), "services": {}, "cron": cron,
+        "message": f"{host['name']} is online",
+    }
+    cache_set(key, data)
+    return data
+
+
+async def collect_ssh_host(host: dict[str, Any]) -> dict[str, Any]:
+    key = f"host_{host['slug']}"
+    cached = cache_get(key, 60)
+    if cached is not None:
+        return cached
+    target = host.get("ssh_target", "")
+    if not target:
+        return {"status": "offline", "name": host["name"], "message": "SSH target not configured"}
+    cmd = (
+        "echo OS=$(uname -s);echo KERNEL=$(uname -r);"
+        "awk '/MemTotal/{print \"MEM_TOTAL=\"$2}/MemAvailable/{print \"MEM_AVAIL=\"$2}' /proc/meminfo;"
+        "df -k / | tail -1 | awk '{print \"DISK_T=\"$2\"\\nDISK_U=\"$3\"\\nDISK_F=\"$4}';"
+        "awk '{print \"UPTIME=\"$1}' /proc/uptime;"
+        "echo TOOLS_PY=$(python3 --version 2>&1);echo TOOLS_NODE=$(node --version 2>&1);echo TOOLS_GIT=$(git --version 2>&1);"
+    )
+    out = await ssh_command(target, cmd, timeout=15)
+    if out is None:
+        return {"status": "offline", "name": host["name"], "message": f"{host['name']} is unreachable"}
+    vals = {}
+    for line in out.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            vals[k.strip()] = v.strip()
+    def num(k: str) -> float:
+        try:
+            return float(vals.get(k, 0))
+        except Exception:
+            return 0.0
+    mt, ma = num("MEM_TOTAL"), num("MEM_AVAIL")
+    dt, du, dfree = num("DISK_T"), num("DISK_U"), num("DISK_F")
+    cron = []
+    if host.get("show_cron"):
+        cron_out = await ssh_command(target, "crontab -l", timeout=8)
+        cron = parse_cron(cron_out.splitlines()) if cron_out else []
+    data = {
+        "status": "online", "name": host["name"], "os": vals.get("OS", "Linux"), "kernel": vals.get("KERNEL", ""),
+        "cpu": "unknown", "ip": host.get("ip", "--"), "uptime_seconds": num("UPTIME"),
+        "ram_total_gb": round(mt / (1024 * 1024), 1) if mt else 0.0, "ram_used_gb": round((mt - ma) / (1024 * 1024), 1) if mt else 0.0, "ram_free_gb": round(ma / (1024 * 1024), 1) if ma else 0.0,
+        "disk_total_gb": round(dt / (1024**2), 1) if dt else 0.0, "disk_used_gb": round(du / (1024**2), 1) if du else 0.0, "disk_free_gb": round(dfree / (1024**2), 1) if dfree else 0.0,
+        "tools": {"Python": clean_version(vals.get("TOOLS_PY", "")), "Node.js": clean_version(vals.get("TOOLS_NODE", "")), "Git": clean_version(vals.get("TOOLS_GIT", ""))},
+        "projects": await collect_projects_ssh(target, host["projects_dir"], host["project_descriptions"]), "services": {}, "cron": cron,
+        "message": f"{host['name']} is online",
+    }
+    cache_set(key, data)
+    return data
+
+
+async def poll_spotify():
     while True:
         try:
-            uptime_secs = time.time() - START_TIME
-            if uptime_secs < 60:
-                uptime_str = f"{int(uptime_secs)} seconds"
-            elif uptime_secs < 3600:
-                uptime_str = f"{int(uptime_secs / 60)} minutes"
-            elif uptime_secs < 86400:
-                hours = int(uptime_secs / 3600)
-                mins = int((uptime_secs % 3600) / 60)
-                uptime_str = f"{hours}h {mins}m"
+            token = await spotify_token()
+            if not token:
+                state["spotify"] = {"status": "no_token", "message": "Spotify credentials unavailable"}
             else:
-                days = int(uptime_secs / 86400)
-                hours = int((uptime_secs % 86400) / 3600)
-                uptime_str = f"{days}d {hours}h"
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.get("https://api.spotify.com/v1/me/player", headers={"Authorization": f"Bearer {token}"})
+                    if resp.status_code in (202, 204):
+                        state["spotify"] = {"status": "idle", "message": "Nothing playing"}
+                    elif resp.status_code == 200:
+                        data = resp.json()
+                        item = data.get("item", {})
+                        artists = ", ".join(a["name"] for a in item.get("artists", []))
+                        imgs = item.get("album", {}).get("images", [])
+                        state["spotify"] = {
+                            "status": "playing" if data.get("is_playing", False) else "paused",
+                            "track": item.get("name", "Unknown"), "artist": artists, "album": item.get("album", {}).get("name", ""),
+                            "art_url": imgs[0]["url"] if imgs else None, "progress_ms": data.get("progress_ms", 0), "duration_ms": item.get("duration_ms", 0),
+                            "message": f"{item.get('name', 'Unknown')} — {artists}" if artists else item.get("name", "Unknown"),
+                        }
+                    else:
+                        state["spotify"] = {"status": "error", "message": f"Spotify request failed ({resp.status_code})"}
+        except Exception:
+            state["spotify"] = {"status": "error", "message": "Spotify unavailable"}
+        await asyncio.sleep(5)
 
-            now_nz = datetime.now(NZ_TZ)
-            nz_time = now_nz.strftime("%I:%M %p, %A %-d %B")
 
-            state["percy"] = {
-                "status": "online",
-                "uptime": uptime_str,
-                "nz_time": nz_time,
-                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-                "quip": PERCY_QUIPS[quip_index % len(PERCY_QUIPS)],
-            }
-            quip_index += 1
-        except Exception as e:
-            print(f"[percy] Error: {e}")
+async def poll_hue():
+    while True:
+        rooms = {}
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                for gid, name in HUE_GROUPS.items():
+                    try:
+                        resp = await client.get(f"{HUE_BASE}/groups/{gid}")
+                        if resp.status_code == 200:
+                            action = resp.json().get("action", {})
+                            on = action.get("on", False)
+                            rooms[str(gid)] = {"name": name, "on": on, "brightness": round(action.get("bri", 0) * 100 / 254) if on else 0, "hue": action.get("hue", 0), "sat": action.get("sat", 0), "ct": action.get("ct", 0), "colormode": action.get("colormode", "ct")}
+                        else:
+                            rooms[str(gid)] = {"name": name, "on": None, "error": True}
+                    except Exception:
+                        rooms[str(gid)] = {"name": name, "on": None, "error": True}
+            state["hue"] = {"status": "ok", "rooms": rooms}
+        except Exception:
+            state["hue"] = {"status": "offline", "rooms": {}, "message": "Hue bridge unavailable"}
+        await asyncio.sleep(10)
+
+
+async def poll_yamaha():
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(f"{YAMAHA_BASE}/main/getStatus")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    state["yamaha"] = {"status": "online", "power": data.get("power", "unknown"), "volume": data.get("volume", 0), "max_volume": 80, "mute": data.get("mute", False), "input": data.get("input", "unknown"), "track": "", "artist": ""}
+                else:
+                    state["yamaha"] = {"status": "offline", "message": "Receiver unavailable"}
+        except Exception:
+            state["yamaha"] = {"status": "offline", "message": "Receiver unavailable"}
+        await asyncio.sleep(10)
+
+
+async def poll_ollama():
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                tags = await client.get(f"{OLLAMA_BASE}/api/tags")
+                ps = await client.get(f"{OLLAMA_BASE}/api/ps")
+            models = [{"name": m.get("name", "?"), "size": f"{round(m.get('size', 0)/(1024**3), 1)}GB", "size_bytes": m.get("size", 0), "modified": m.get("modified_at", "")} for m in tags.json().get("models", [])] if tags.status_code == 200 else []
+            running = [m.get("name", "?") for m in ps.json().get("models", [])] if ps.status_code == 200 else []
+            state["ollama"] = {"status": "online", "models": models, "running": running, "message": f"{len(models)} models installed"}
+        except Exception:
+            state["ollama"] = {"status": "offline", "models": [], "running": [], "message": "Ollama unavailable"}
+        await asyncio.sleep(30)
+
+
+async def poll_backups():
+    while True:
+        try:
+            names = CONFIG["backups"].get("hosts") or [h["name"] for h in CONFIG.get("hosts", [])]
+            if not BACKUP_LOG.exists():
+                state["backups"] = {"status": "no_log", "hosts": {}, "message": "Backup log not found"}
+                await asyncio.sleep(60)
+                continue
+            lines = BACKUP_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+            found = {name: None for name in names}
+            for line in reversed(lines):
+                ts_match = re.search(r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)", line)
+                if not ts_match:
+                    continue
+                ts = None
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                    try:
+                        ts = datetime.strptime(ts_match.group(1).replace("T", " "), fmt)
+                        break
+                    except ValueError:
+                        pass
+                if not ts:
+                    continue
+                ll = line.lower()
+                for name in names:
+                    if found[name] is None and name.lower() in ll:
+                        found[name] = ts
+                if names and all(found.values()):
+                    break
+            warning = float(CONFIG["backups"].get("warning_hours", 24))
+            critical = float(CONFIG["backups"].get("critical_hours", 48))
+            now = datetime.now()
+            hosts = {}
+            for name in names:
+                ts = found[name]
+                if not ts:
+                    hosts[name] = {"last_backup": None, "health": "unknown", "message": "No backup record found"}
+                else:
+                    hours = (now - ts).total_seconds() / 3600
+                    health = "green" if hours < warning else ("yellow" if hours < critical else "red")
+                    hosts[name] = {"last_backup": ts.isoformat(), "hours_ago": round(hours, 1), "health": health, "message": f"Last backup {round(hours, 1)} hours ago"}
+            state["backups"] = {"status": "ok", "hosts": hosts}
+        except Exception:
+            state["backups"] = {"status": "error", "hosts": {}, "message": "Backup polling failed"}
         await asyncio.sleep(60)
 
 
-# ---------------------------------------------------------------------------
-# Lifecycle
-# ---------------------------------------------------------------------------
+async def poll_host(host: dict[str, Any]):
+    key = f"host_{host['slug']}"
+    while True:
+        try:
+            state[key] = await (collect_ssh_host(host) if host.get("type") == "ssh" else collect_local_host(host))
+        except Exception:
+            state[key] = {"status": "offline", "name": host["name"], "message": f"{host['name']} telemetry unavailable"}
+        await asyncio.sleep(60)
+
+
+async def poll_agent():
+    idx = 0
+    while True:
+        uptime_secs = time.time() - START_TIME
+        uptime = f"{int(uptime_secs)} seconds" if uptime_secs < 60 else (f"{int(uptime_secs/60)} minutes" if uptime_secs < 3600 else (f"{int(uptime_secs/3600)}h {int((uptime_secs % 3600)/60)}m" if uptime_secs < 86400 else f"{int(uptime_secs/86400)}d {int((uptime_secs % 86400)/3600)}h"))
+        now_nz = datetime.now(NZ_TZ)
+        state["agent"] = {"status": "online", "uptime": uptime, "nz_time": now_nz.strftime("%I:%M %p, %A %-d %B"), "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", "quip": STATUS_MESSAGES[idx % len(STATUS_MESSAGES)]}
+        idx += 1
+        await asyncio.sleep(60)
+
+
+def safe_config() -> dict[str, Any]:
+    return {
+        "agent": {k: CONFIG["agent"].get(k) for k in ("name", "emoji", "tagline", "avatar", "theme")},
+        "panels": {name: bool(CONFIG.get(name, {}).get("enabled", False)) for name in PANELS},
+        "nas": {"name": NAS_NAME, "media_paths": list(NAS_MEDIA.keys())},
+        "hosts": [{"name": h["name"], "slug": h["slug"], "emoji": h["emoji"], "type": h["type"], "tab": bool(h["tab"]), "ollama": bool(h["ollama"]), "show_cron": bool(h["show_cron"]), "project_descriptions": h["project_descriptions"]} for h in CONFIG.get("hosts", []) if h.get("enabled", True)],
+        "network_devices": CONFIG.get("network_devices", []),
+        "log_files": {k: v.get("label", k) for k, v in LOG_FILES.items()} if CONFIG.get("logs", {}).get("enabled") else {},
+        "themes": ["bioluminescent", "midnight", "terminal", "minimal"],
+    }
 
 
 @app.on_event("startup")
 async def startup():
-    # Load crontab (one-time)
-    load_crontab()
-
-    # Start background pollers
-    asyncio.create_task(poll_spotify())
-    asyncio.create_task(poll_yamaha())
-    asyncio.create_task(poll_hue())
-    asyncio.create_task(poll_backups())
-    asyncio.create_task(poll_hypnos())
-    asyncio.create_task(poll_morpheus_system())
-    asyncio.create_task(poll_hypnos_system())
-    asyncio.create_task(poll_bulletin())
-    asyncio.create_task(poll_percy())
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
+    asyncio.create_task(poll_agent())
+    if CONFIG.get("spotify", {}).get("enabled"):
+        asyncio.create_task(poll_spotify())
+    if CONFIG.get("hue", {}).get("enabled"):
+        asyncio.create_task(poll_hue())
+    if CONFIG.get("yamaha", {}).get("enabled"):
+        asyncio.create_task(poll_yamaha())
+    if CONFIG.get("ollama", {}).get("enabled"):
+        asyncio.create_task(poll_ollama())
+    if CONFIG.get("backups", {}).get("enabled"):
+        asyncio.create_task(poll_backups())
+    for host in CONFIG.get("hosts", []):
+        if host.get("enabled", True) and host.get("tab"):
+            asyncio.create_task(poll_host(host))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1073,168 +517,102 @@ async def index():
 
 
 @app.get("/events")
-async def sse(request: Request):
-    async def event_generator():
+async def events(request: Request):
+    async def gen():
         while True:
             if await request.is_disconnected():
                 break
-            payload = json.dumps(state, default=str)
-            yield f"data: {payload}\n\n"
+            yield f"data: {json.dumps(state, default=str)}\n\n"
             await asyncio.sleep(2)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/state")
 async def api_state():
-    """One-shot JSON endpoint for debugging."""
     return state
 
 
-@app.get("/api/morpheus/system")
-async def api_morpheus_system():
-    return await get_morpheus_system()
+@app.get("/api/config")
+async def api_config():
+    return safe_config()
 
 
-@app.get("/api/hypnos/system")
-async def api_hypnos_system():
-    return await get_hypnos_system()
-
-
-@app.get("/api/galactica/movies")
-async def api_galactica_movies():
-    cached = cache_get("galactica_movies", max_age=3600)
+@app.get("/api/nas/media/{library}")
+async def api_nas_media(library: str):
+    if not CONFIG.get("nas", {}).get("enabled"):
+        return {"status": "disabled", "name": library, "items": [], "count": 0, "message": "NAS disabled"}
+    path = NAS_MEDIA.get(library)
+    if not path:
+        return {"status": "error", "name": library, "items": [], "count": 0, "message": "Unknown media path"}
+    key = f"nas_media_{library}"
+    cached = cache_get(key, 3600)
     if cached is not None:
         return cached
-
-    output = await ssh_galactica("LC_ALL=C ls -1 /mnt/HD/HD_a2/Video/")
-    if output is None:
-        return {
-            "status": "offline",
-            "count": 0,
-            "size_gb": 203,
-            "movies": [],
-            "message": "Galactica offline",
-        }
-
-    movies = sorted([line.strip() for line in output.splitlines() if line.strip()], key=str.casefold)
-    payload = {
-        "status": "online",
-        "count": len(movies),
-        "size_gb": 203,
-        "movies": movies,
-        "message": "203GB of movies on Galactica",
-    }
-    cache_set("galactica_movies", payload)
+    out = await ssh_command(NAS_TARGET, f"LC_ALL=C ls -1 {shlex.quote(path)}", timeout=12)
+    if out is None:
+        return {"status": "offline", "name": library, "items": [], "count": 0, "size_gb": NAS_MEDIA_SIZES.get(library, 0), "message": f"{NAS_NAME} offline"}
+    items = sorted([x.strip() for x in out.splitlines() if x.strip()], key=str.casefold)
+    payload = {"status": "online", "name": library, "items": items, "count": len(items), "size_gb": NAS_MEDIA_SIZES.get(library, 0), "message": f"{NAS_NAME} online"}
+    cache_set(key, payload)
     return payload
 
 
-@app.get("/api/galactica/music")
-async def api_galactica_music():
-    cached = cache_get("galactica_music", max_age=3600)
+@app.get("/api/nas/storage")
+async def api_nas_storage():
+    if not CONFIG.get("nas", {}).get("enabled"):
+        return {"status": "disabled", "drives": [], "message": "NAS disabled"}
+    if not NAS_STORAGE_PATHS:
+        return {"status": "error", "drives": [], "message": "No NAS storage paths configured"}
+    cached = cache_get("nas_storage", 300)
     if cached is not None:
         return cached
-
-    output = await ssh_galactica("LC_ALL=C ls -1 /mnt/HD/HD_a2/Music/")
-    if output is None:
-        return {
-            "status": "offline",
-            "count": 0,
-            "size_gb": 311,
-            "artists": [],
-            "message": "Galactica offline",
-        }
-
-    artists = sorted([line.strip() for line in output.splitlines() if line.strip()], key=str.casefold)
-    payload = {
-        "status": "online",
-        "count": len(artists),
-        "size_gb": 311,
-        "artists": artists,
-        "message": "311GB of music on Galactica",
-    }
-    cache_set("galactica_music", payload)
-    return payload
-
-
-@app.get("/api/galactica/storage")
-async def api_galactica_storage():
-    cached = cache_get("galactica_storage", max_age=300)
-    if cached is not None:
-        return cached
-
-    output = await ssh_galactica("df -h /mnt/HD/HD_a2 /mnt/USB/USB1_c1")
-    if output is None:
-        return {"status": "offline", "drives": [], "message": "Galactica offline"}
-
+    out = await ssh_command(NAS_TARGET, f"df -h {' '.join(shlex.quote(p) for p in NAS_STORAGE_PATHS)}", timeout=10)
+    if out is None:
+        return {"status": "offline", "drives": [], "message": f"{NAS_NAME} offline"}
     drives = []
-    for line in output.splitlines():
+    for line in out.splitlines():
         line = line.strip()
         if not line or line.startswith("Filesystem"):
             continue
         parts = line.split()
         if len(parts) < 6:
             continue
-        total_gb = _to_gb(parts[1])
-        used_gb = _to_gb(parts[2])
-        free_gb = _to_gb(parts[3])
-        pct_raw = parts[4].strip().replace("%", "")
         try:
-            pct = int(float(pct_raw))
+            pct = int(float(parts[4].replace("%", "")))
         except ValueError:
             pct = 0
-        mount = parts[-1]
-        name = mount.split("/")[-1]
-        drives.append(
-            {
-                "name": name,
-                "total_gb": total_gb,
-                "used_gb": used_gb,
-                "free_gb": free_gb,
-                "pct": pct,
-            }
-        )
-
-    payload = {"status": "online", "drives": drives}
-    cache_set("galactica_storage", payload)
+        drives.append({"name": parts[-1].split("/")[-1] or parts[-1], "total_gb": size_to_gb(parts[1]), "used_gb": size_to_gb(parts[2]), "free_gb": size_to_gb(parts[3]), "pct": pct})
+    payload = {"status": "online", "drives": drives, "message": f"{NAS_NAME} online"}
+    cache_set("nas_storage", payload)
     return payload
+
+
+def size_to_gb(size: str) -> float:
+    m = re.match(r"^\s*([\d.]+)\s*([KMGTP]?)B?\s*$", size.strip(), flags=re.I)
+    if not m:
+        return 0.0
+    n = float(m.group(1))
+    u = m.group(2).upper()
+    mult = {"": 1 / (1024**3), "K": 1 / (1024**2), "M": 1 / 1024, "G": 1, "T": 1024, "P": 1024 * 1024}
+    return round(n * mult.get(u, 1), 1)
 
 
 @app.get("/api/logs/{name}")
 async def api_logs(name: str):
-    if name == "hypnos-draft":
-        cmd = (
-            "powershell -NoProfile -Command "
-            f"\"Get-Content -Path '{HYPNOS_DRAFT_LOG_WINDOWS}' -Tail 50\""
-        )
-        output = await ssh_hypnos(cmd, timeout=12)
-        if output is None:
-            return {
-                "name": name,
-                "status": "offline",
-                "lines": ["HYPNOS offline"],
-                "total_lines": 0,
-                "message": "HYPNOS offline",
-            }
-        lines = output.splitlines()
-        return {"name": name, "status": "online", "lines": lines[-50:], "total_lines": len(lines)}
-
-    if name not in LOG_FILES:
-        return {
-            "name": name,
-            "status": "error",
-            "lines": ["Unknown log requested"],
-            "total_lines": 0,
-            "message": "Unknown log name",
-        }
-
-    lines, total_lines = _tail_local_log(LOG_FILES[name], lines=50)
-    return {"name": name, "status": "ok", "lines": lines, "total_lines": total_lines}
+    info = LOG_FILES.get(name)
+    if not info:
+        return {"name": name, "status": "error", "lines": ["Unknown log requested"], "total_lines": 0, "message": "Unknown log name"}
+    tail = int(info.get("tail_lines", 50))
+    if info.get("path"):
+        path = Path(info["path"])
+        if not path.exists():
+            return {"name": name, "status": "error", "lines": ["Log file not found"], "total_lines": 0, "message": "Log file not found"}
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return {"name": name, "status": "ok", "lines": lines[-tail:], "total_lines": len(lines), "label": info.get("label", name)}
+    if info.get("ssh_target") and info.get("command"):
+        out = await ssh_command(info["ssh_target"], info["command"], timeout=12)
+        if out is None:
+            return {"name": name, "status": "offline", "lines": ["Remote log unavailable"], "total_lines": 0, "message": "Remote log unavailable"}
+        lines = out.splitlines()
+        return {"name": name, "status": "ok", "lines": lines[-tail:], "total_lines": len(lines), "label": info.get("label", name)}
+    return {"name": name, "status": "error", "lines": ["Log source not configured"], "total_lines": 0, "message": "Log source not configured"}

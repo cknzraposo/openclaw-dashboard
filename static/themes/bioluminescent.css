@@ -1,0 +1,17 @@
+:root {
+    --bg-primary: #0f1419;
+    --bg-panel: #151c24;
+    --bg-panel-hover: #1a2332;
+    --text-primary: #e8edf3;
+    --text-secondary: #9aa7b8;
+    --text-muted: #718096;
+    --accent-1: #f5a623;
+    --accent-2: #00d4ff;
+    --accent-glow: rgba(0, 212, 255, 0.14);
+    --status-green: #00e5a0;
+    --status-red: #ef4444;
+    --status-yellow: #f5a623;
+    --status-gray: #4a5568;
+    --border-color: rgba(255, 255, 255, 0.08);
+    --panel-border: rgba(255, 255, 255, 0.06);
+}
