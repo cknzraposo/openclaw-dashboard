@@ -54,6 +54,16 @@ Browser ──SSE──▶ FastAPI (uvicorn)
 
 ## Quick Start
 
+### Already running OpenClaw?
+
+Just tell your agent:
+
+> *"Set up a dashboard for me using https://github.com/cknzraposo/openclaw-dashboard"*
+
+Your agent knows your network, your devices, and your preferences. It'll clone the repo, write the config, and have it running before you finish your coffee. ☕
+
+### Manual Setup
+
 ```bash
 git clone https://github.com/cknzraposo/openclaw-dashboard.git
 cd openclaw-dashboard
