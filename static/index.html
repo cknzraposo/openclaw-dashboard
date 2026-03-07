@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🪸 Percy Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🪸</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        abyss: '#0f1419',
+                        deep: '#151c24',
+                        reef: '#1a2332',
+                        surface: '#1f2b3d',
+                        amber: '#f5a623',
+                        cyan: '#00d4ff',
+                        softblue: '#4a9eff',
+                        coral: '#ff6b9d',
+                        seagreen: '#00e5a0',
+                    },
+                    fontFamily: {
+                        mono: ['"Space Mono"', 'monospace'],
+                        display: ['"Space Grotesk"', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-abyss text-gray-200 font-display min-h-screen">
+
+    <!-- Header -->
+    <header class="border-b border-white/5 px-6 py-4">
+        <div class="max-w-[1600px] mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">🪸</span>
+                <div>
+                    <h1 class="text-xl font-bold text-white tracking-tight">Percy Dashboard</h1>
+                    <p class="text-xs text-gray-500 font-mono" id="percy-tagline">Waking up...</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="text-right">
+                    <div class="text-xs text-gray-500 font-mono" id="nz-time">--:-- --</div>
+                    <div class="text-xs text-gray-600 font-mono" id="uptime">Uptime: --</div>
+                </div>
+                <div id="connection-dot" class="w-2.5 h-2.5 rounded-full bg-gray-600 ring-2 ring-gray-600/30" title="Connecting..."></div>
+            </div>
+        </div>
+    </header>
+
+    <nav class="tab-nav-wrap border-b border-white/5 px-6">
+        <div class="max-w-[1600px] mx-auto">
+            <div class="tab-nav" role="tablist" aria-label="Dashboard Tabs">
+                <button class="tab-btn" data-tab="main" role="tab" aria-selected="true">Main</button>
+                <button class="tab-btn" data-tab="entertainment" role="tab" aria-selected="false">Entertainment</button>
+                <button class="tab-btn" data-tab="morpheus" role="tab" aria-selected="false">MORPHEUS</button>
+                <button class="tab-btn" data-tab="hypnos" role="tab" aria-selected="false">HYPNOS</button>
+                <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+                <button class="tab-btn" data-tab="logs" role="tab" aria-selected="false">Logs</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-[1600px] mx-auto p-6 space-y-6">
+        <section id="tab-main" class="tab-content">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <div class="lg:col-span-2">
+                    <div class="panel" id="panel-spotify">
+                        <div class="panel-header">
+                            <span class="panel-icon">🎵</span>
+                            <span class="panel-title">Now Playing</span>
+                            <span class="panel-status" id="spotify-status">...</span>
+                        </div>
+                        <div class="panel-body" id="spotify-body">
+                            <div class="flex items-center gap-5">
+                                <div id="spotify-art" class="w-24 h-24 rounded-lg bg-reef flex-shrink-0 flex items-center justify-center text-3xl overflow-hidden">
+                                    🎵
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-lg font-semibold text-white truncate" id="spotify-track">--</p>
+                                    <p class="text-sm text-gray-400 truncate" id="spotify-artist">--</p>
+                                    <p class="text-xs text-gray-500 mt-1 font-mono" id="spotify-message">Waiting for data...</p>
+                                    <div class="mt-2 h-1 rounded-full bg-reef overflow-hidden" id="spotify-progress-bar">
+                                        <div class="h-full rounded-full bg-gradient-to-r from-seagreen to-cyan transition-all duration-1000" id="spotify-progress" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="yamaha-info mt-4 pt-3 border-t border-white/5 space-y-1.5">
+                                <div class="text-[0.68rem] uppercase tracking-[0.14em] text-cyan/70 font-mono">Yamaha R-N402</div>
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-mono">
+                                    <div class="stat-block">
+                                        <span class="stat-label">Power</span>
+                                        <span class="stat-value" id="yamaha-power">--</span>
+                                    </div>
+                                    <div class="stat-block">
+                                        <span class="stat-label">Volume</span>
+                                        <span class="stat-value" id="yamaha-volume">--</span>
+                                    </div>
+                                    <div class="stat-block">
+                                        <span class="stat-label">Input</span>
+                                        <span class="stat-value" id="yamaha-input">--</span>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-500 font-mono" id="yamaha-track">Yamaha offline</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel panel-glow-cyan" id="panel-percy">
+                        <div class="panel-header">
+                            <span class="panel-icon">🪸</span>
+                            <span class="panel-title">Percy Status</span>
+                            <span class="status-dot status-online" id="percy-dot"></span>
+                        </div>
+                        <div class="panel-body space-y-3" id="percy-body">
+                            <p class="text-sm text-cyan italic" id="percy-quip">"Waking up..."</p>
+                            <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+                                <div class="stat-block">
+                                    <span class="stat-label">Uptime</span>
+                                    <span class="stat-value" id="percy-uptime">--</span>
+                                </div>
+                                <div class="stat-block">
+                                    <span class="stat-label">Python</span>
+                                    <span class="stat-value" id="percy-python">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel" id="panel-hue">
+                        <div class="panel-header">
+                            <span class="panel-icon">💡</span>
+                            <span class="panel-title">Lights</span>
+                        </div>
+                        <div class="panel-body space-y-3" id="hue-body">
+                            <p class="text-sm text-gray-500">Waiting for data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel" id="panel-backups">
+                        <div class="panel-header">
+                            <span class="panel-icon">💾</span>
+                            <span class="panel-title">Backups</span>
+                        </div>
+                        <div class="panel-body space-y-3" id="backups-body">
+                            <p class="text-sm text-gray-500">Waiting for data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-entertainment" class="tab-content hidden" aria-hidden="true">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-icon">🎬</span>
+                        <span class="panel-title">Movies</span>
+                    </div>
+                    <div class="panel-body">
+                        <p class="text-xs text-gray-400 font-mono mb-3" id="movies-summary">Loading movies...</p>
+                        <div id="movies-list" class="media-list media-list-tall">
+                            <p class="text-sm text-gray-500">Waiting for data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-icon">🎵</span>
+                        <span class="panel-title">Music Library</span>
+                    </div>
+                    <div class="panel-body space-y-3">
+                        <p class="text-xs text-gray-400 font-mono" id="music-summary">Loading artists...</p>
+                        <input id="music-search" type="text" placeholder="Filter artists..." class="w-full px-3 py-2 rounded-md bg-reef text-gray-200 border border-white/10 text-sm focus:outline-none focus:ring-1 focus:ring-cyan/40" />
+                        <div id="music-list" class="media-list media-list-tall">
+                            <p class="text-sm text-gray-500">Waiting for data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-icon">📸</span>
+                        <span class="panel-title">Photos</span>
+                    </div>
+                    <div class="panel-body" id="photos-body">
+                        <p class="text-sm text-gray-300">6.5GB of photos archived on Galactica.</p>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-icon">💿</span>
+                        <span class="panel-title">Galactica Storage</span>
+                    </div>
+                    <div class="panel-body space-y-3" id="storage-body">
+                        <p class="text-sm text-gray-500">Loading storage data...</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-morpheus" class="tab-content hidden" aria-hidden="true">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <div class="lg:col-span-2">
+                    <div class="panel panel-glow-cyan">
+                        <div class="panel-header">
+                            <span class="panel-icon">🖥️</span>
+                            <span class="panel-title">MORPHEUS System Overview</span>
+                            <span class="panel-status" id="morpheus-overview-status">Waiting...</span>
+                        </div>
+                        <div class="panel-body" id="morpheus-overview-body">
+                            <p class="text-sm text-gray-500">Waiting for MORPHEUS data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel" id="panel-hypnos-tools">
+                        <div class="panel-header">
+                            <span class="panel-icon">🛠️</span>
+                            <span class="panel-title">Tools & CLIs</span>
+                        </div>
+                        <div class="panel-body" id="morpheus-tools-body">
+                            <p class="text-sm text-gray-500">Waiting for MORPHEUS data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-icon">⚙️</span>
+                            <span class="panel-title">Services</span>
+                        </div>
+                        <div class="panel-body" id="morpheus-services-body">
+                            <p class="text-sm text-gray-500">Waiting for MORPHEUS data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-2">
+                    <div class="panel" id="panel-hypnos-projects">
+                        <div class="panel-header">
+                            <span class="panel-icon">🗂️</span>
+                            <span class="panel-title">Projects</span>
+                        </div>
+                        <div class="panel-body" id="morpheus-projects-body">
+                            <p class="text-sm text-gray-500">Waiting for MORPHEUS data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-2">
+                    <div class="panel" id="panel-cron">
+                        <div class="panel-header">
+                            <span class="panel-icon">⏰</span>
+                            <span class="panel-title">Cron Schedule</span>
+                        </div>
+                        <div class="panel-body" id="cron-body">
+                            <p class="text-sm text-gray-500">Waiting for data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-hypnos" class="tab-content hidden" aria-hidden="true">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <div class="lg:col-span-2">
+                    <div class="panel panel-glow-cyan" id="panel-hypnos-overview">
+                        <div class="panel-header">
+                            <span class="panel-icon">🤖</span>
+                            <span class="panel-title">HYPNOS System Overview</span>
+                            <span class="status-dot" id="hypnos-tab-dot"></span>
+                        </div>
+                        <div class="panel-body" id="hypnos-overview-body">
+                            <p class="text-sm text-gray-500">Waiting for HYPNOS data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel" id="panel-hypnos-models">
+                        <div class="panel-header">
+                            <span class="panel-icon">🧠</span>
+                            <span class="panel-title">Ollama Models</span>
+                        </div>
+                        <div class="panel-body" id="hypnos-models-body">
+                            <p class="text-sm text-gray-500">Waiting for HYPNOS model data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-icon">🛠️</span>
+                            <span class="panel-title">Tools & CLIs</span>
+                        </div>
+                        <div class="panel-body" id="hypnos-tools-body">
+                            <p class="text-sm text-gray-500">Waiting for HYPNOS data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-2">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-icon">🗂️</span>
+                            <span class="panel-title">Projects</span>
+                        </div>
+                        <div class="panel-body" id="hypnos-projects-body">
+                            <p class="text-sm text-gray-500">Waiting for HYPNOS data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-settings" class="tab-content hidden" aria-hidden="true">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-icon">🌐</span>
+                            <span class="panel-title">Network Devices</span>
+                        </div>
+                        <div class="panel-body" id="network-devices-body"></div>
+                    </div>
+                </div>
+                <div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-icon">🔧</span>
+                            <span class="panel-title">System Info</span>
+                        </div>
+                        <div class="panel-body" id="system-info-body"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-logs" class="tab-content hidden" aria-hidden="true">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <div>
+                    <div class="panel" id="panel-bulletin">
+                        <div class="panel-header">
+                            <span class="panel-icon">📬</span>
+                            <span class="panel-title">Weekly Bulletin</span>
+                        </div>
+                        <div class="panel-body space-y-2" id="bulletin-body">
+                            <p class="text-sm text-gray-500">Waiting for data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-icon">📬</span>
+                            <span class="panel-title">Bulletin Logs</span>
+                        </div>
+                        <div class="panel-body space-y-2">
+                            <div class="log-title">bulletin-prep.log</div>
+                            <pre id="log-bulletin-prep" class="log-block">Loading...</pre>
+                            <div class="log-title">bulletin-send.log</div>
+                            <pre id="log-bulletin-send" class="log-block">Loading...</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-icon">💾</span>
+                            <span class="panel-title">Backup Log</span>
+                        </div>
+                        <div class="panel-body">
+                            <pre id="log-backup" class="log-block log-block-tall">Loading...</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-3">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-icon">🤖</span>
+                            <span class="panel-title">HYPNOS Draft Log</span>
+                        </div>
+                        <div class="panel-body">
+                            <pre id="log-hypnos-draft" class="log-block log-block-xl">Loading...</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="border-t border-white/5 py-4 mt-8">
+        <p class="text-center text-xs text-gray-600 font-mono">🪸 Percy (Percebe) · Clinging to MORPHEUS · <span id="footer-time"></span></p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

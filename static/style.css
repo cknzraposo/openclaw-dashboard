@@ -1,0 +1,573 @@
+/* ==========================================================================
+   🪸 Percy Dashboard — Deep-sea bioluminescent theme
+   ========================================================================== */
+
+/* --- Base & Globals ------------------------------------------------------- */
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    background-color: #0f1419;
+    background-image:
+        radial-gradient(ellipse at 20% 50%, rgba(0, 212, 255, 0.03) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(245, 166, 35, 0.03) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, rgba(74, 158, 255, 0.02) 0%, transparent 50%);
+    min-height: 100vh;
+}
+
+::selection {
+    background: rgba(0, 212, 255, 0.3);
+    color: #fff;
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0f1419;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #1f2b3d;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #2a3a52;
+}
+
+/* --- Panels (glassmorphism cards) ----------------------------------------- */
+
+.panel {
+    background: linear-gradient(135deg, rgba(26, 35, 50, 0.8) 0%, rgba(21, 28, 36, 0.9) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 16px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    overflow: hidden;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.panel:hover {
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 0 30px rgba(0, 212, 255, 0.05);
+}
+
+.panel-glow-cyan {
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.08), inset 0 0 20px rgba(0, 212, 255, 0.03);
+    border-color: rgba(0, 212, 255, 0.15);
+}
+
+.panel-glow-amber {
+    box-shadow: 0 0 20px rgba(245, 166, 35, 0.08), inset 0 0 20px rgba(245, 166, 35, 0.03);
+    border-color: rgba(245, 166, 35, 0.15);
+}
+
+.panel-glow-green {
+    box-shadow: 0 0 20px rgba(0, 229, 160, 0.08), inset 0 0 20px rgba(0, 229, 160, 0.03);
+    border-color: rgba(0, 229, 160, 0.15);
+}
+
+.panel-muted {
+    opacity: 0.72;
+    border-color: rgba(148, 163, 184, 0.2);
+    box-shadow: none;
+}
+
+.panel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 20px 0 20px;
+}
+
+.panel-icon {
+    font-size: 1.1rem;
+}
+
+.panel-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex: 1;
+}
+
+.panel-status {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.panel-body {
+    padding: 16px 20px 20px 20px;
+    flex: 1;
+}
+
+/* --- Status dots ---------------------------------------------------------- */
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4a5568;
+    flex-shrink: 0;
+}
+
+.status-online {
+    background: #00e5a0;
+    box-shadow: 0 0 8px rgba(0, 229, 160, 0.6);
+    animation: pulse-green 2s ease-in-out infinite;
+}
+
+.status-offline {
+    background: #ef4444;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+}
+
+.status-idle {
+    background: #f5a623;
+    box-shadow: 0 0 8px rgba(245, 166, 35, 0.4);
+}
+
+/* --- Stat blocks ---------------------------------------------------------- */
+
+.stat-block {
+    background: rgba(15, 20, 25, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.stat-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.stat-value {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-family: 'Space Mono', monospace;
+}
+
+/* --- Hue room cards ------------------------------------------------------- */
+
+.hue-room {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(15, 20, 25, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 10px;
+    transition: border-color 0.3s ease;
+}
+
+.hue-room.room-on {
+    border-color: rgba(245, 166, 35, 0.2);
+}
+
+.hue-color-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.5s ease;
+}
+
+.hue-room-name {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+    flex: 1;
+}
+
+.hue-room-detail {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.35);
+}
+
+/* --- HYPNOS model list ---------------------------------------------------- */
+
+.model-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: rgba(15, 20, 25, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.5);
+    transition: all 0.3s ease;
+}
+
+.model-tag.model-running {
+    border-color: rgba(0, 229, 160, 0.3);
+    color: #00e5a0;
+    background: rgba(0, 229, 160, 0.08);
+}
+
+.model-row-running td {
+    color: #b9ffe8;
+    text-shadow: 0 0 8px rgba(0, 229, 160, 0.25);
+}
+
+.model-size {
+    color: rgba(255, 255, 255, 0.25);
+    font-size: 0.65rem;
+}
+
+/* --- Backup indicators ---------------------------------------------------- */
+
+.backup-host {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(15, 20, 25, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 10px;
+}
+
+.backup-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.backup-green {
+    background: #00e5a0;
+    box-shadow: 0 0 6px rgba(0, 229, 160, 0.5);
+}
+
+.backup-yellow {
+    background: #f5a623;
+    box-shadow: 0 0 6px rgba(245, 166, 35, 0.5);
+}
+
+.backup-red {
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+.backup-unknown {
+    background: #4a5568;
+}
+
+/* --- Cron table ----------------------------------------------------------- */
+
+.cron-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.cron-table th {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(255, 255, 255, 0.25);
+    text-align: left;
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.cron-table td {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.55);
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    vertical-align: top;
+}
+
+.cron-table tr:last-child td {
+    border-bottom: none;
+}
+
+.cron-table tr:hover td {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.cron-desc {
+    color: #00d4ff;
+    white-space: nowrap;
+}
+
+.cron-cmd {
+    color: rgba(255, 255, 255, 0.4);
+    word-break: break-all;
+    max-width: 500px;
+}
+
+/* --- Bulletin ------------------------------------------------------------- */
+
+.bulletin-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: rgba(15, 20, 25, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+}
+
+.bulletin-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.3);
+    text-transform: uppercase;
+    width: 50px;
+    flex-shrink: 0;
+}
+
+.bulletin-msg {
+    font-size: 0.82rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* --- Spotify album art ---------------------------------------------------- */
+
+#spotify-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 8px;
+}
+
+/* --- Animations ----------------------------------------------------------- */
+
+@keyframes pulse-green {
+    0%, 100% { box-shadow: 0 0 8px rgba(0, 229, 160, 0.6); }
+    50% { box-shadow: 0 0 16px rgba(0, 229, 160, 0.9), 0 0 4px rgba(0, 229, 160, 0.3); }
+}
+
+@keyframes glow-breathe {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+}
+
+@keyframes fade-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+    animation: fade-in 0.4s ease-out;
+}
+
+/* --- Connection status bar ------------------------------------------------ */
+
+.connection-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 8px;
+    text-align: center;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    z-index: 50;
+    transition: transform 0.3s ease;
+}
+
+.connection-bar.hidden {
+    transform: translateY(100%);
+}
+
+.connection-bar.error {
+    background: rgba(239, 68, 68, 0.15);
+    border-top: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+}
+
+.connection-bar.reconnecting {
+    background: rgba(245, 166, 35, 0.15);
+    border-top: 1px solid rgba(245, 166, 35, 0.3);
+    color: #fcd34d;
+}
+
+/* --- Tabs ----------------------------------------------------------------- */
+
+.tab-nav {
+    display: flex;
+    gap: 6px;
+    padding: 10px 0;
+}
+
+.tab-btn {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    background: rgba(15, 20, 25, 0.45);
+    color: rgba(255, 255, 255, 0.65);
+    padding: 8px 14px;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: 'Space Mono', monospace;
+    transition: all 0.25s ease;
+}
+
+.tab-btn:hover {
+    border-color: rgba(0, 212, 255, 0.3);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.tab-btn.active {
+    border-color: rgba(0, 212, 255, 0.45);
+    box-shadow: 0 0 14px rgba(0, 212, 255, 0.14), inset 0 0 18px rgba(245, 166, 35, 0.08);
+    color: #c8f5ff;
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.12), rgba(245, 166, 35, 0.08));
+}
+
+.tab-content {
+    animation: fade-in 0.25s ease-out;
+}
+
+/* --- Media lists ---------------------------------------------------------- */
+
+.media-list {
+    background: rgba(15, 20, 25, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    overflow: auto;
+}
+
+.media-list-tall {
+    max-height: 360px;
+}
+
+.media-item {
+    padding: 7px 11px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.72);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.media-item:last-child {
+    border-bottom: none;
+}
+
+.media-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* --- Storage -------------------------------------------------------------- */
+
+.storage-row {
+    background: rgba(15, 20, 25, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+.storage-bar {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.storage-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #00e5a0, #00d4ff);
+}
+
+/* --- Tables --------------------------------------------------------------- */
+
+.device-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.device-table th,
+.device-table td {
+    font-size: 0.72rem;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.device-table th {
+    color: rgba(255, 255, 255, 0.3);
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    font-family: 'Space Mono', monospace;
+    text-align: left;
+}
+
+.device-table td {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.device-table tr:last-child td {
+    border-bottom: none;
+}
+
+/* --- Logs ----------------------------------------------------------------- */
+
+.log-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(255, 255, 255, 0.35);
+}
+
+.log-block {
+    margin: 0;
+    max-height: 170px;
+    overflow: auto;
+    white-space: pre-wrap;
+    background: rgba(15, 20, 25, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.68rem;
+    line-height: 1.45;
+    color: rgba(185, 225, 255, 0.88);
+    font-family: 'Space Mono', monospace;
+}
+
+.log-block-tall {
+    max-height: 392px;
+}
+
+.log-block-xl {
+    max-height: 280px;
+}
+
+/* --- Responsive ----------------------------------------------------------- */
+
+@media (max-width: 1023px) {
+    .panel-body {
+        padding: 12px 16px 16px 16px;
+    }
+
+    .panel-header {
+        padding: 12px 16px 0 16px;
+    }
+}
