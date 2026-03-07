@@ -13,3 +13,4 @@ certs/
 .DS_Store
 SPEC.md
 UPGRADE-SPEC*.md
+GENERALISE-SPEC.md

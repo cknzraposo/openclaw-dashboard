@@ -1,12 +1,18 @@
-# 🪸 Percy Dashboard
+# 🪸 OpenClaw Dashboard
 
-A real-time home network status dashboard with a deep-sea bioluminescent theme. Built for [Percy (Percebe)](https://percy.raposo.ai) — an AI assistant that monitors infrastructure, media, and automation across a home lab.
+A real-time, config-driven home network dashboard for [OpenClaw](https://github.com/openclaw/openclaw) agents. Name your agent, pick a theme, enable the panels you need — zero build step, zero npm dependencies.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green) ![License](https://img.shields.io/badge/License-MIT-yellow)
 
+## What is OpenClaw?
+
+[OpenClaw](https://docs.openclaw.ai) is an open-source AI agent framework that gives your AI assistant persistent memory, tool access, and the ability to interact with your world — files, APIs, devices, messaging platforms, and more. Think of it as the operating system for your personal AI.
+
+This dashboard gives your OpenClaw agent a visual status page — a single-pane view of the infrastructure it monitors and controls.
+
 ## What It Does
 
-Percy Dashboard provides a single-pane view of a home network's vital signs, streamed live via Server-Sent Events:
+Your agent manages services across your home network. This dashboard shows their vital signs, streamed live via Server-Sent Events:
 
 - **Now Playing** — Spotify playback + Yamaha MusicCast receiver status
 - **Hue Lights** — Philips Hue room states (on/off, brightness, colour)
@@ -17,6 +23,8 @@ Percy Dashboard provides a single-pane view of a home network's vital signs, str
 - **Cron Jobs** — Scheduled task overview with human-readable descriptions
 - **Log Viewer** — Tail view of pipeline and backup logs
 
+**Every panel is optional.** Enable what you have, skip what you don't.
+
 ## Screenshots
 
 *Coming soon — it looks like a bioluminescent reef, not a corporate dashboard.*
@@ -24,6 +32,9 @@ Percy Dashboard provides a single-pane view of a home network's vital signs, str
 ## Architecture
 
 ```
+config.yaml ──────▶ What to show (panels, hosts, identity, theme)
+.env ──────────────▶ Secrets (API keys, IPs, credentials)
+
 Browser ──SSE──▶ FastAPI (uvicorn)
                     ├── Spotify Web API (polling)
                     ├── Philips Hue Bridge API (polling)
@@ -31,79 +42,142 @@ Browser ──SSE──▶ FastAPI (uvicorn)
                     ├── Ollama API (polling)
                     ├── SSH to NAS (cached)
                     ├── SSH to remote hosts (cached)
-                    └── Local log files (tailing)
+                    └── Local system info + log files
 ```
 
 - **Backend:** Python 3 + FastAPI + uvicorn with background async pollers
 - **Frontend:** Single HTML page + vanilla JS + Tailwind CSS (CDN)
-- **Live updates:** Server-Sent Events — backend polls data sources at configurable intervals, pushes state to all connected clients
-- **No database** — all data is live from APIs, SSH, and log files
+- **Live updates:** Server-Sent Events — backend polls data sources, pushes state to all connected clients
+- **Config-driven:** `config.yaml` controls everything — agent identity, panels, host tabs, theme
+- **No database** — all data is live from APIs, SSH, and the local system
 - **No build step** — no npm, no bundler, just static files served by FastAPI
+
+## Quick Start
+
+```bash
+git clone https://github.com/cknzraposo/openclaw-dashboard.git
+cd openclaw-dashboard
+pip install -r requirements.txt
+
+# Configure
+cp config.example.yaml config.yaml   # edit: agent name, panels, hosts
+cp .env.example .env                 # edit: API keys, IPs, credentials
+
+# Run
+uvicorn app:app --host 0.0.0.0 --port 8080
+```
+
+Open `http://localhost:8080` — your dashboard is live.
+
+## Configuration
+
+### Agent Identity
+
+```yaml
+agent:
+  name: "Atlas"              # your agent's name
+  emoji: "🌍"                # shown in header and title
+  tagline: "Watching over everything"
+  theme: "midnight"          # bioluminescent | midnight | terminal | minimal
+```
+
+### Enable Panels
+
+Only enable what you have. Everything else stays hidden:
+
+```yaml
+spotify:
+  enabled: true              # needs SPOTIFY_CLIENT_ID in .env
+
+hue:
+  enabled: false             # no Hue bridge? skip it
+
+yamaha:
+  enabled: true              # MusicCast receiver
+
+ollama:
+  enabled: true              # local LLM server
+
+nas:
+  enabled: true              # NAS with media library
+  name: "Vault"
+  media_paths:
+    music: "/volume1/Music"
+    movies: "/volume1/Movies"
+```
+
+### Host Tabs
+
+Monitor any number of machines — each gets its own tab:
+
+```yaml
+hosts:
+  - name: "Titan"
+    type: "local"            # this machine
+    emoji: "🖥️"
+    tab: true
+    show_cron: true
+
+  - name: "Forge"
+    type: "ssh"              # remote via SSH
+    emoji: "🔥"
+    ssh_target: "${REMOTE_HOST_SSH}"  # from .env
+    tab: true
+    ollama: true             # show Ollama models panel
+```
+
+### Secrets
+
+API keys and IPs go in `.env` (never committed):
+
+```bash
+SPOTIFY_CLIENT_ID=your_client_id
+SPOTIFY_CLIENT_SECRET=your_client_secret
+HUE_BASE=http://your-hue-bridge/api/your-api-key
+OLLAMA_HOST=http://10.0.0.20:11434
+NAS_SSH_TARGET=user@your-nas
+REMOTE_HOST_SSH=user@your-llm-box
+```
+
+See `.env.example` for all options.
+
+## Themes
+
+Four built-in themes — switch in `config.yaml` or live in the Settings tab:
+
+| Theme | Vibe |
+|---|---|
+| `bioluminescent` | Dark slate, amber/cyan glow, deep-sea atmosphere |
+| `midnight` | Deep navy, clean whites, subtle blue accents |
+| `terminal` | Green-on-black, monospace, retro hacker aesthetic |
+| `minimal` | Light mode, clean and simple |
+
+Themes use CSS variables — create your own in `static/themes/custom.css`.
 
 ## Tabs
 
-| Tab | Description |
+Tabs are generated dynamically from your config:
+
+| Tab | When it appears |
 |---|---|
-| **Main** | At-a-glance: music, lights, backups, assistant status |
-| **Entertainment** | NAS media library: movies, music, photos, storage |
-| **MORPHEUS** | Primary host: system info, tools, projects, cron |
-| **HYPNOS** | Secondary host: system info, Ollama models, projects |
-| **Settings** | Network devices, system configuration |
-| **Logs** | Pipeline and backup log viewers |
+| **Main** | Always — shows enabled panels (now playing, lights, backups, agent status) |
+| **Entertainment** | When NAS media is configured |
+| **[Host tabs]** | One per machine in `hosts[]` with `tab: true` |
+| **Settings** | Always — network devices, theme switcher, system info |
+| **Logs** | When log files are configured |
 
-## Setup
+## Systemd Service (optional)
 
-### Requirements
-
-- Python 3.10+
-- Network access to your devices (Hue bridge, Yamaha receiver, Ollama instance, NAS via SSH)
-- Spotify API credentials (client ID + secret from [developer.spotify.com](https://developer.spotify.com))
-
-### Install
-
-```bash
-git clone https://github.com/cknzraposo/percy-dashboard.git
-cd percy-dashboard
-pip install -r requirements.txt
-```
-
-### Configure
-
-The dashboard reads configuration from environment variables and credential files. You'll need to set up:
-
-1. **Spotify** — Client ID, client secret, and refresh token
-2. **Philips Hue** — Bridge IP and API key
-3. **Yamaha MusicCast** — Receiver IP
-4. **Ollama** — Host IP and port
-5. **NAS** — SSH access (key-based auth recommended)
-6. **Remote hosts** — SSH access for system monitoring
-
-See `app.py` for the configuration section at the top of the file. Replace placeholder values with your own device addresses and credentials.
-
-### Run
-
-```bash
-# HTTP
-uvicorn app:app --host 0.0.0.0 --port 8080
-
-# HTTPS (with your own certs)
-uvicorn app:app --host 0.0.0.0 --port 8080 \
-  --ssl-keyfile certs/key.pem \
-  --ssl-certfile certs/cert.pem
-```
-
-### Systemd (optional)
-
-Create a user service for auto-start:
+For auto-start on boot:
 
 ```ini
 [Unit]
-Description=Percy Dashboard
+Description=OpenClaw Dashboard
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/path/to/percy-dashboard
+WorkingDirectory=/path/to/openclaw-dashboard
 ExecStart=/usr/bin/uvicorn app:app --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=5
@@ -113,15 +187,21 @@ WantedBy=default.target
 ```
 
 ```bash
-systemctl --user enable percy-dashboard
-systemctl --user start percy-dashboard
+systemctl --user enable openclaw-dashboard
+systemctl --user start openclaw-dashboard
 ```
 
-## Design
+## HTTPS (recommended)
 
-The theme is **deep-sea bioluminescence** — dark slate backgrounds with amber, cyan, and soft blue accents. Glassmorphism panels with subtle glow effects. Space Mono + Space Grotesk typography.
+Use [mkcert](https://github.com/FiloSottile/mkcert) for trusted local HTTPS:
 
-This is intentionally *not* a generic monitoring dashboard. It's meant to feel like a living space — warm, personal, distinctive.
+```bash
+mkcert -install
+mkcert your-hostname localhost 127.0.0.1
+uvicorn app:app --host 0.0.0.0 --port 8080 \
+  --ssl-keyfile your-hostname+2-key.pem \
+  --ssl-certfile your-hostname+2.pem
+```
 
 ## Tech Stack
 
@@ -129,6 +209,7 @@ This is intentionally *not* a generic monitoring dashboard. It's meant to feel l
 |---|---|---|
 | Backend | FastAPI + uvicorn | Async-native, lightweight, perfect for SSE |
 | Frontend | Vanilla JS + Tailwind CDN | Zero build step, fast iteration |
+| Config | YAML + dotenv | Human-readable, secrets separated |
 | Live updates | Server-Sent Events | Simpler than WebSocket for one-way data |
 | Data | Direct API calls + SSH | No database needed for live status |
 
@@ -136,12 +217,30 @@ This is intentionally *not* a generic monitoring dashboard. It's meant to feel l
 
 - **LAN only** — designed for home network use behind a router/NAT
 - **No authentication** — relies on network-level security
-- **No secrets in repo** — API keys, IPs, and credentials must be configured locally
-- **SSL recommended** — use [mkcert](https://github.com/FiloSottile/mkcert) for trusted local HTTPS
+- **No secrets in repo** — API keys, IPs, and credentials stay in `.env`
+- **Config is safe to commit** — `config.yaml` contains structure, not secrets
+
+## Origin Story
+
+This started as a personal dashboard for [Percy](https://percy.raposo.ai) 🪸 — an AI familiar built on OpenClaw. Percy needed a way to see the state of the home network it manages: music playback, smart lights, backup freshness, local LLM servers, and the machines running it all.
+
+It turned out to be useful enough to generalise. Now any OpenClaw agent can have its own dashboard — just change the config.
 
 ## Contributing
 
-This is a personal project, but PRs and ideas are welcome. If you adapt it for your own home lab, I'd love to hear about it.
+PRs and ideas welcome. If you adapt it for your own setup, I'd love to hear about it.
+
+Some areas that could use help:
+- More themes
+- Additional panel types (Home Assistant, Grafana, Pi-hole, etc.)
+- Authentication options for non-LAN deployments
+- Docker support
+
+## Contributors
+
+- [CK](https://github.com/cknzraposo) — creator
+- [GitHub Copilot](https://github.com/features/copilot) — implementation partner (config system, themes, dynamic tabs)
+- [Percy](https://percy.raposo.ai) — architecture, specs, and the original dashboard
 
 ## License
 
@@ -149,4 +248,4 @@ This is a personal project, but PRs and ideas are welcome. If you adapt it for y
 
 ---
 
-*Built by [Percy](https://percy.raposo.ai) 🪸 — an AI familiar clinging to the edge of what's possible.*
+*Built for [OpenClaw](https://github.com/openclaw/openclaw) agents everywhere.*
