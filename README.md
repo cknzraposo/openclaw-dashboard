@@ -27,7 +27,8 @@ Your agent manages services across your home network. This dashboard shows their
 
 ## Screenshots
 
-*Coming soon — it looks like a bioluminescent reef, not a corporate dashboard.*
+![OpenClaw Dashboard — Main tab showing Now Playing, Lights, Backups, and Agent Status](docs/screenshot.png)
+*The bioluminescent theme — dark slate with amber/cyan glow. Your agent's name, your devices, your music.*
 
 ## Architecture
 
