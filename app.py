@@ -34,30 +34,38 @@ def slugify(value: str) -> str:
 # Edit these variables directly to match your environment.
 # Keep secrets (API keys, OAuth secrets, SSH credentials) in .env only.
 #
-AGENT_NAME = "Percy"
-AGENT_EMOJI = "🪸"
-AGENT_TAGLINE = "An AI familiar clinging to the edge of what's possible"
-AGENT_AVATAR = None  # Example: "static/avatar.png"
+# --- Your agent ---
+AGENT_NAME = "My Agent"              # Your agent's name
+AGENT_EMOJI = "🤖"                   # Emoji shown in the header
+AGENT_TAGLINE = "Home network dashboard"  # Subtitle text
+AGENT_AVATAR = None                  # Path to avatar image, e.g. "static/avatar.png"
 
-SPOTIFY_TOKEN_FILE = Path("~/.percy/credentials/spotify-tokens.json").expanduser()
+# --- Spotify ---
+SPOTIFY_TOKEN_FILE = Path("~/.openclaw/credentials/spotify-tokens.json").expanduser()
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
 
-HUE_BRIDGE_IP = "10.0.0.20"
+# --- Philips Hue ---
+HUE_BRIDGE_IP = "10.0.0.20"         # Your Hue Bridge IP
 HUE_API_KEY = os.environ.get("HUE_API_KEY", "")
 HUE_BASE = f"http://{HUE_BRIDGE_IP}/api/{HUE_API_KEY}" if HUE_API_KEY else ""
-HUE_GROUPS = {"1": "Living Room", "2": "Bedroom"}
+HUE_GROUPS = {"1": "Living Room", "2": "Bedroom"}  # Group ID → display name
 
-YAMAHA_BASE = "http://your-yamaha-ip/YamahaExtendedControl/v1"
+# --- Music receiver (Yamaha MusicCast) ---
+YAMAHA_BASE = "http://10.0.0.30/YamahaExtendedControl/v1"  # Your Yamaha IP
+
+# --- Ollama (local LLMs) ---
 OLLAMA_BASE = "http://127.0.0.1:11434"
 
+# --- NAS ---
 NAS_NAME = "NAS"
-NAS_TARGET = os.environ.get("NAS_SSH_TARGET", "")
+NAS_TARGET = os.environ.get("NAS_SSH_TARGET", "")  # e.g. "user@10.0.0.40"
 NAS_MEDIA = {"Music": "/volume1/Music", "Movies": "/volume1/Movies", "Photos": "/volume1/Photos"}
 NAS_STORAGE_PATHS = ["/volume1"]
 NAS_MEDIA_SIZES = {"Music": 0, "Movies": 0, "Photos": 0}
 
-BACKUP_LOG = Path("~/.percy/logs/backup.log").expanduser()
+# --- Backups ---
+BACKUP_LOG = Path("~/backups/backup.log").expanduser()  # Path to your backup log
 BACKUP_WARNING_HOURS = 24.0
 BACKUP_CRITICAL_HOURS = 48.0
 
@@ -95,10 +103,11 @@ NETWORK_DEVICES = [
     {"name": NAS_NAME, "ip": "10.0.0.30", "role": "Storage"},
 ]
 
+# --- Log files (shown in the Logs tab) ---
 LOG_FILES = {
-    "backup": {"path": str(Path("~/.percy/logs/backup.log").expanduser()), "label": "Backup", "tail_lines": 80},
-    "bulletin-prep": {"path": str(Path("~/.percy/logs/bulletin-prep.log").expanduser()), "label": "Bulletin Prep", "tail_lines": 80},
-    "bulletin-send": {"path": str(Path("~/.percy/logs/bulletin-send.log").expanduser()), "label": "Bulletin Send", "tail_lines": 80},
+    "backup": {"path": str(Path("~/logs/backup.log").expanduser()), "label": "Backup", "tail_lines": 80},
+    # Add your own log files here:
+    # "my-job": {"path": "/var/log/my-job.log", "label": "My Job", "tail_lines": 80},
 }
 
 app = FastAPI(title=f"{AGENT_NAME} Dashboard")
