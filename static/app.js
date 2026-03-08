@@ -1,7 +1,6 @@
 (function () {
     'use strict';
 
-    const THEMES = ['bioluminescent', 'midnight', 'terminal', 'minimal'];
     let config = null;
     let tabs = [];
     let state = {};
@@ -43,18 +42,6 @@
         return Math.max(0, Math.min(100, (u / t) * 100));
     }
 
-    function loadTheme(themeName) {
-        const valid = THEMES.includes(themeName) ? themeName : 'bioluminescent';
-        const link = document.getElementById('theme-css');
-        if (link) link.href = `/static/themes/${valid}.css`;
-    }
-
-    function resolveTheme() {
-        const saved = localStorage.getItem('dashboard_theme');
-        if (saved && THEMES.includes(saved)) return saved;
-        return config?.agent?.theme && THEMES.includes(config.agent.theme) ? config.agent.theme : 'bioluminescent';
-    }
-
     function applyIdentity() {
         const agent = config.agent || {};
         document.title = `${agent.name || 'Agent'} Dashboard`;
@@ -82,12 +69,12 @@
 
     function buildTabs() {
         tabs = [{ id: 'main', label: 'Main', type: 'main' }];
-        if (config.panels?.nas) tabs.push({ id: 'entertainment', label: config.nas?.name || 'Media', type: 'nas' });
+        tabs.push({ id: 'entertainment', label: config.nas?.name || 'Media', type: 'nas' });
         for (const host of config.hosts || []) {
             if (host.tab) tabs.push({ id: host.slug || slugify(host.name), label: `${host.emoji || '🖥️'} ${host.name}`, type: 'host', host });
         }
         tabs.push({ id: 'settings', label: 'Settings', type: 'settings' });
-        if (config.panels?.logs) tabs.push({ id: 'logs', label: 'Logs', type: 'logs' });
+        tabs.push({ id: 'logs', label: 'Logs', type: 'logs' });
     }
 
     function renderTabs() {
@@ -115,10 +102,8 @@
     }
 
     function renderMainTab() {
-        const showNowPlaying = config.panels.spotify || config.panels.yamaha;
         return `
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                ${showNowPlaying ? `
                 <div class="lg:col-span-2">
                     <div class="panel" id="panel-spotify">
                         <div class="panel-header"><span class="panel-icon">🎵</span><span class="panel-title">Now Playing</span><span class="panel-status" id="spotify-status">...</span></div>
@@ -132,7 +117,6 @@
                                     <div class="mt-2 h-1 rounded-full bg-[color:var(--bg-panel-hover)] overflow-hidden"><div class="h-full rounded-full storage-fill" id="spotify-progress" style="width: 0%"></div></div>
                                 </div>
                             </div>
-                            ${config.panels.yamaha ? `
                             <div class="mt-4 pt-3 border-t border-[color:var(--border-color)] space-y-1.5">
                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-mono">
                                     <div class="stat-block"><span class="stat-label">Power</span><span class="stat-value" id="yamaha-power">--</span></div>
@@ -140,10 +124,10 @@
                                     <div class="stat-block"><span class="stat-label">Input</span><span class="stat-value" id="yamaha-input">--</span></div>
                                 </div>
                                 <p class="text-xs font-mono text-[color:var(--text-muted)]" id="yamaha-track">Receiver unavailable</p>
-                            </div>` : ''}
+                            </div>
                         </div>
                     </div>
-                </div>` : ''}
+                </div>
 
                 <div>
                     <div class="panel panel-glow-cyan">
@@ -158,8 +142,8 @@
                     </div>
                 </div>
 
-                ${config.panels.hue ? `<div><div class="panel"><div class="panel-header"><span class="panel-icon">💡</span><span class="panel-title">Lights</span></div><div class="panel-body space-y-3" id="hue-body"><p class="text-sm text-[color:var(--text-muted)]">Waiting for data...</p></div></div></div>` : ''}
-                ${config.panels.backups ? `<div><div class="panel"><div class="panel-header"><span class="panel-icon">💾</span><span class="panel-title">Backups</span></div><div class="panel-body space-y-3" id="backups-body"><p class="text-sm text-[color:var(--text-muted)]">Waiting for data...</p></div></div></div>` : ''}
+                <div><div class="panel"><div class="panel-header"><span class="panel-icon">💡</span><span class="panel-title">Lights</span></div><div class="panel-body space-y-3" id="hue-body"><p class="text-sm text-[color:var(--text-muted)]">Waiting for data...</p></div></div></div>
+                <div><div class="panel"><div class="panel-header"><span class="panel-icon">💾</span><span class="panel-title">Backups</span></div><div class="panel-body space-y-3" id="backups-body"><p class="text-sm text-[color:var(--text-muted)]">Waiting for data...</p></div></div></div>
             </div>`;
     }
 
@@ -207,7 +191,6 @@
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <div><div class="panel"><div class="panel-header"><span class="panel-icon">🌐</span><span class="panel-title">Network Devices</span></div><div class="panel-body" id="network-devices-body"></div></div></div>
                 <div><div class="panel"><div class="panel-header"><span class="panel-icon">🔧</span><span class="panel-title">System Info</span></div><div class="panel-body" id="system-info-body"></div></div></div>
-                <div class="lg:col-span-2"><div class="panel"><div class="panel-header"><span class="panel-icon">🎨</span><span class="panel-title">Theme</span></div><div class="panel-body"><select id="theme-select" class="w-full max-w-sm px-3 py-2 rounded-md border text-sm bg-[color:var(--bg-panel-hover)] border-[color:var(--border-color)]"></select></div></div></div>
             </div>`;
     }
 
@@ -259,19 +242,7 @@
                 <div class="stat-block"><span class="stat-label">Host IP</span><span class="stat-value">${escapeHtml(host)}</span></div>
                 <div class="stat-block"><span class="stat-label">Dashboard</span><span class="stat-value">${escapeHtml(window.location.host)}</span></div>
                 <div class="stat-block"><span class="stat-label">Python</span><span class="stat-value" id="sys-python">--</span></div>
-                <div class="stat-block"><span class="stat-label">Theme</span><span class="stat-value">${escapeHtml(resolveTheme())}</span></div>
             </div>`;
-    }
-
-    function initThemeSelector() {
-        const select = document.getElementById('theme-select');
-        if (!select) return;
-        select.innerHTML = THEMES.map((name) => `<option value="${name}">${name}</option>`).join('');
-        select.value = resolveTheme();
-        select.addEventListener('change', () => {
-            localStorage.setItem('dashboard_theme', select.value);
-            loadTheme(select.value);
-        });
     }
 
     function setConnectionStatus(status) {
@@ -314,10 +285,10 @@
     }
 
     function updateAll() {
-        if (config.panels.spotify) updateSpotify(state.spotify || {});
-        if (config.panels.yamaha) updateYamaha(state.yamaha || {});
-        if (config.panels.hue) updateHue(state.hue || {});
-        if (config.panels.backups) updateBackups(state.backups || {});
+        updateSpotify(state.spotify || {});
+        updateYamaha(state.yamaha || {});
+        updateHue(state.hue || {});
+        updateBackups(state.backups || {});
         updateAgent(state.agent || {});
         for (const host of config.hosts || []) {
             if (host.tab) updateHostTab(host, state[`host_${host.slug || slugify(host.name)}`] || null, state.ollama || null);
@@ -579,19 +550,15 @@
     async function init() {
         const response = await fetch('/api/config');
         config = await response.json();
-        const theme = resolveTheme();
-        loadTheme(theme);
-        localStorage.setItem('dashboard_theme', theme);
         applyIdentity();
         buildTabs();
         renderTabs();
         renderLayout();
         renderNetworkDevices();
         renderSystemInfo();
-        initThemeSelector();
         setActiveTab(hashToTab(window.location.hash), false);
-        if (config.panels?.nas) loadNasData();
-        if (config.panels?.logs) {
+        loadNasData();
+        if (Object.keys(config.log_files || {}).length > 0) {
             refreshLogs();
             setInterval(refreshLogs, 20000);
         }

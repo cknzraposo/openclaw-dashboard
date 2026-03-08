@@ -15,7 +15,6 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
-import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -23,103 +22,90 @@ from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
-CONFIG_FILE = Path("config.yaml")
 NZ_TZ = ZoneInfo("Pacific/Auckland")
 START_TIME = time.time()
-
-DEFAULT_CONFIG: dict[str, Any] = {
-    "agent": {"name": "Agent", "emoji": "🤖", "tagline": "Monitoring system status", "avatar": None, "theme": "bioluminescent"},
-    "spotify": {"enabled": False, "token_file": "~/.openclaw/credentials/spotify-tokens.json"},
-    "hue": {"enabled": False, "base_url": "http://your-hue-bridge/api/your-api-key", "groups": {}},
-    "yamaha": {"enabled": False, "base_url": "http://your-yamaha/YamahaExtendedControl/v1"},
-    "ollama": {"enabled": False, "base_url": "http://localhost:11434"},
-    "nas": {"enabled": False, "name": "NAS", "ssh_target": "", "media_paths": {}, "storage_paths": [], "media_sizes_gb": {}},
-    "backups": {"enabled": False, "log_file": "~/.openclaw/logs/backup.log", "warning_hours": 24, "critical_hours": 48, "hosts": []},
-    "logs": {"enabled": False, "files": {}},
-    "hosts": [],
-    "network_devices": [],
-}
-PANELS = ("spotify", "hue", "yamaha", "ollama", "nas", "backups", "logs")
-
-
-def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
-
-def expand_env_vars(obj: Any) -> Any:
-    if isinstance(obj, str):
-        return re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), m.group(0)), obj)
-    if isinstance(obj, dict):
-        return {k: expand_env_vars(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [expand_env_vars(v) for v in obj]
-    return obj
 
 
 def slugify(value: str) -> str:
     text = re.sub(r"[^a-zA-Z0-9]+", "_", (value or "").strip().lower())
     return re.sub(r"_+", "_", text).strip("_") or "host"
+#
+# Clone-and-modify setup:
+# Edit these variables directly to match your environment.
+# Keep secrets (API keys, OAuth secrets, SSH credentials) in .env only.
+#
+AGENT_NAME = "Percy"
+AGENT_EMOJI = "🪸"
+AGENT_TAGLINE = "An AI familiar clinging to the edge of what's possible"
+AGENT_AVATAR = None  # Example: "static/avatar.png"
 
-
-def load_config() -> dict[str, Any]:
-    user = {}
-    if CONFIG_FILE.exists():
-        user = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
-    cfg = expand_env_vars(deep_merge(DEFAULT_CONFIG, user))
-
-    cfg["spotify"]["token_file"] = str(Path(cfg["spotify"]["token_file"]).expanduser())
-    cfg["backups"]["log_file"] = str(Path(cfg["backups"]["log_file"]).expanduser())
-    if cfg.get("logs", {}).get("enabled"):
-        for _, info in cfg["logs"].get("files", {}).items():
-            if info.get("path"):
-                info["path"] = str(Path(info["path"]).expanduser())
-
-    hosts = []
-    for host in cfg.get("hosts", []):
-        if not isinstance(host, dict) or not host.get("name"):
-            continue
-        h = dict(host)
-        h.setdefault("emoji", "🖥️")
-        h.setdefault("type", "local")
-        h.setdefault("tab", False)
-        h.setdefault("ollama", False)
-        h.setdefault("show_cron", False)
-        h.setdefault("enabled", True)
-        h.setdefault("projects_dir", "~/projects")
-        h.setdefault("project_descriptions", {})
-        h["slug"] = slugify(h["name"])
-        hosts.append(h)
-    cfg["hosts"] = hosts
-    return cfg
-
-
-CONFIG = load_config()
-SPOTIFY_TOKEN_FILE = Path(CONFIG["spotify"]["token_file"])
+SPOTIFY_TOKEN_FILE = Path("~/.percy/credentials/spotify-tokens.json").expanduser()
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
-HUE_BASE = CONFIG["hue"].get("base_url", "")
-HUE_GROUPS = CONFIG["hue"].get("groups", {})
-YAMAHA_BASE = CONFIG["yamaha"].get("base_url", "")
-OLLAMA_BASE = CONFIG["ollama"].get("base_url", "")
-NAS_NAME = CONFIG["nas"].get("name", "NAS")
-NAS_TARGET = CONFIG["nas"].get("ssh_target", "")
-NAS_MEDIA = CONFIG["nas"].get("media_paths", {})
-NAS_STORAGE_PATHS = CONFIG["nas"].get("storage_paths", []) or list(NAS_MEDIA.values())
-NAS_MEDIA_SIZES = CONFIG["nas"].get("media_sizes_gb", {})
-BACKUP_LOG = Path(CONFIG["backups"]["log_file"])
-LOG_FILES = CONFIG["logs"].get("files", {}) if CONFIG.get("logs", {}).get("enabled") else {}
 
-app = FastAPI(title=f"{CONFIG['agent'].get('name', 'Agent')} Dashboard")
+HUE_BRIDGE_IP = "10.0.0.20"
+HUE_API_KEY = os.environ.get("HUE_API_KEY", "")
+HUE_BASE = f"http://{HUE_BRIDGE_IP}/api/{HUE_API_KEY}" if HUE_API_KEY else ""
+HUE_GROUPS = {"1": "Living Room", "2": "Bedroom"}
+
+YAMAHA_BASE = "http://your-yamaha-ip/YamahaExtendedControl/v1"
+OLLAMA_BASE = "http://127.0.0.1:11434"
+
+NAS_NAME = "NAS"
+NAS_TARGET = os.environ.get("NAS_SSH_TARGET", "")
+NAS_MEDIA = {"Music": "/volume1/Music", "Movies": "/volume1/Movies", "Photos": "/volume1/Photos"}
+NAS_STORAGE_PATHS = ["/volume1"]
+NAS_MEDIA_SIZES = {"Music": 0, "Movies": 0, "Photos": 0}
+
+BACKUP_LOG = Path("~/.percy/logs/backup.log").expanduser()
+BACKUP_WARNING_HOURS = 24.0
+BACKUP_CRITICAL_HOURS = 48.0
+
+REMOTE_HOST_SSH = os.environ.get("REMOTE_HOST_SSH", "")
+HOSTS: list[dict[str, Any]] = [
+    {
+        "name": "MORPHEUS",
+        "emoji": "🖥️",
+        "type": "local",
+        "tab": True,
+        "ollama": False,
+        "show_cron": True,
+        "projects_dir": "~/projects",
+        "project_descriptions": {"openclaw-dashboard": "Dashboard source"},
+    },
+    {
+        "name": "HYPNOS",
+        "emoji": "🤖",
+        "type": "ssh",
+        "ssh_target": REMOTE_HOST_SSH,
+        "ip": "10.0.0.40",
+        "tab": True,
+        "ollama": True,
+        "show_cron": False,
+        "projects_dir": "~/projects",
+        "project_descriptions": {},
+    },
+]
+for _host in HOSTS:
+    _host.setdefault("slug", slugify(_host.get("name", "host")))
+
+NETWORK_DEVICES = [
+    {"name": "Primary Host", "ip": "10.0.0.10", "role": "Dashboard host"},
+    {"name": "Remote Host", "ip": "10.0.0.40", "role": "LLM server"},
+    {"name": NAS_NAME, "ip": "10.0.0.30", "role": "Storage"},
+]
+
+LOG_FILES = {
+    "backup": {"path": str(Path("~/.percy/logs/backup.log").expanduser()), "label": "Backup", "tail_lines": 80},
+    "bulletin-prep": {"path": str(Path("~/.percy/logs/bulletin-prep.log").expanduser()), "label": "Bulletin Prep", "tail_lines": 80},
+    "bulletin-send": {"path": str(Path("~/.percy/logs/bulletin-send.log").expanduser()), "label": "Bulletin Send", "tail_lines": 80},
+}
+
+app = FastAPI(title=f"{AGENT_NAME} Dashboard")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 state: dict[str, Any] = {"agent": {}, "spotify": {}, "hue": {}, "yamaha": {}, "ollama": {}, "backups": {}}
-for host in CONFIG.get("hosts", []):
+for host in HOSTS:
     state[f"host_{host['slug']}"] = {"status": "unknown", "name": host["name"], "message": "Waiting for telemetry"}
 
 _cache: dict[str, tuple[float, Any]] = {}
@@ -364,6 +350,10 @@ async def poll_spotify():
 
 async def poll_hue():
     while True:
+        if not HUE_BASE:
+            state["hue"] = {"status": "offline", "rooms": {}, "message": "Set HUE_BASE in app.py"}
+            await asyncio.sleep(10)
+            continue
         rooms = {}
         try:
             async with httpx.AsyncClient(timeout=5) as client:
@@ -386,6 +376,10 @@ async def poll_hue():
 
 async def poll_yamaha():
     while True:
+        if not YAMAHA_BASE:
+            state["yamaha"] = {"status": "offline", "message": "Set YAMAHA_BASE in app.py"}
+            await asyncio.sleep(10)
+            continue
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(f"{YAMAHA_BASE}/main/getStatus")
@@ -401,6 +395,10 @@ async def poll_yamaha():
 
 async def poll_ollama():
     while True:
+        if not OLLAMA_BASE:
+            state["ollama"] = {"status": "offline", "models": [], "running": [], "message": "Set OLLAMA_BASE in app.py"}
+            await asyncio.sleep(30)
+            continue
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 tags = await client.get(f"{OLLAMA_BASE}/api/tags")
@@ -416,7 +414,7 @@ async def poll_ollama():
 async def poll_backups():
     while True:
         try:
-            names = CONFIG["backups"].get("hosts") or [h["name"] for h in CONFIG.get("hosts", [])]
+            names = [h["name"] for h in HOSTS]
             if not BACKUP_LOG.exists():
                 state["backups"] = {"status": "no_log", "hosts": {}, "message": "Backup log not found"}
                 await asyncio.sleep(60)
@@ -442,8 +440,8 @@ async def poll_backups():
                         found[name] = ts
                 if names and all(found.values()):
                     break
-            warning = float(CONFIG["backups"].get("warning_hours", 24))
-            critical = float(CONFIG["backups"].get("critical_hours", 48))
+            warning = BACKUP_WARNING_HOURS
+            critical = BACKUP_CRITICAL_HOURS
             now = datetime.now()
             hosts = {}
             for name in names:
@@ -483,31 +481,24 @@ async def poll_agent():
 
 def safe_config() -> dict[str, Any]:
     return {
-        "agent": {k: CONFIG["agent"].get(k) for k in ("name", "emoji", "tagline", "avatar", "theme")},
-        "panels": {name: bool(CONFIG.get(name, {}).get("enabled", False)) for name in PANELS},
+        "agent": {"name": AGENT_NAME, "emoji": AGENT_EMOJI, "tagline": AGENT_TAGLINE, "avatar": AGENT_AVATAR},
         "nas": {"name": NAS_NAME, "media_paths": list(NAS_MEDIA.keys())},
-        "hosts": [{"name": h["name"], "slug": h["slug"], "emoji": h["emoji"], "type": h["type"], "tab": bool(h["tab"]), "ollama": bool(h["ollama"]), "show_cron": bool(h["show_cron"]), "project_descriptions": h["project_descriptions"]} for h in CONFIG.get("hosts", []) if h.get("enabled", True)],
-        "network_devices": CONFIG.get("network_devices", []),
-        "log_files": {k: v.get("label", k) for k, v in LOG_FILES.items()} if CONFIG.get("logs", {}).get("enabled") else {},
-        "themes": ["bioluminescent", "midnight", "terminal", "minimal"],
+        "hosts": [{"name": h["name"], "slug": h["slug"], "emoji": h["emoji"], "type": h["type"], "tab": bool(h["tab"]), "ollama": bool(h["ollama"]), "show_cron": bool(h["show_cron"]), "project_descriptions": h["project_descriptions"]} for h in HOSTS if h.get("tab")],
+        "network_devices": NETWORK_DEVICES,
+        "log_files": {k: v.get("label", k) for k, v in LOG_FILES.items()},
     }
 
 
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(poll_agent())
-    if CONFIG.get("spotify", {}).get("enabled"):
-        asyncio.create_task(poll_spotify())
-    if CONFIG.get("hue", {}).get("enabled"):
-        asyncio.create_task(poll_hue())
-    if CONFIG.get("yamaha", {}).get("enabled"):
-        asyncio.create_task(poll_yamaha())
-    if CONFIG.get("ollama", {}).get("enabled"):
-        asyncio.create_task(poll_ollama())
-    if CONFIG.get("backups", {}).get("enabled"):
-        asyncio.create_task(poll_backups())
-    for host in CONFIG.get("hosts", []):
-        if host.get("enabled", True) and host.get("tab"):
+    asyncio.create_task(poll_spotify())
+    asyncio.create_task(poll_hue())
+    asyncio.create_task(poll_yamaha())
+    asyncio.create_task(poll_ollama())
+    asyncio.create_task(poll_backups())
+    for host in HOSTS:
+        if host.get("tab"):
             asyncio.create_task(poll_host(host))
 
 
@@ -539,8 +530,6 @@ async def api_config():
 
 @app.get("/api/nas/media/{library}")
 async def api_nas_media(library: str):
-    if not CONFIG.get("nas", {}).get("enabled"):
-        return {"status": "disabled", "name": library, "items": [], "count": 0, "message": "NAS disabled"}
     path = NAS_MEDIA.get(library)
     if not path:
         return {"status": "error", "name": library, "items": [], "count": 0, "message": "Unknown media path"}
@@ -559,8 +548,6 @@ async def api_nas_media(library: str):
 
 @app.get("/api/nas/storage")
 async def api_nas_storage():
-    if not CONFIG.get("nas", {}).get("enabled"):
-        return {"status": "disabled", "drives": [], "message": "NAS disabled"}
     if not NAS_STORAGE_PATHS:
         return {"status": "error", "drives": [], "message": "No NAS storage paths configured"}
     cached = cache_get("nas_storage", 300)
@@ -616,3 +603,9 @@ async def api_logs(name: str):
         lines = out.splitlines()
         return {"name": name, "status": "ok", "lines": lines[-tail:], "total_lines": len(lines), "label": info.get("label", name)}
     return {"name": name, "status": "error", "lines": ["Log source not configured"], "total_lines": 0, "message": "Log source not configured"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app:app", host="0.0.0.0", port=8080, reload=False)
