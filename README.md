@@ -1,6 +1,6 @@
 # 🪸 OpenClaw Dashboard
 
-A real-time home network dashboard for [OpenClaw](https://github.com/openclaw/openclaw) agents. One file to edit, one command to run, zero build step.
+A zero-build FastAPI dashboard for [OpenClaw](https://github.com/openclaw/openclaw) agents and self-hosted setups. Clone it, edit a few values, run `python app.py`, and get a live view of the systems your agent watches and manages.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green) ![License](https://img.shields.io/badge/License-MIT-yellow)
 
@@ -10,7 +10,18 @@ A real-time home network dashboard for [OpenClaw](https://github.com/openclaw/op
 
 This dashboard gives your OpenClaw agent a visual status page - a single-pane view of the infrastructure it monitors and controls.
 
-## What It Does
+## Who It's For
+
+This repo is for people who want:
+
+- a **real dashboard they can understand in one sitting**
+- a **starter project they can fork and hack on quickly**
+- a self-hosted control surface for **music, smart home, local AI, backups, and host health**
+- **no frontend toolchain drama**
+
+It is intentionally simple. This is less a dashboard framework and more a **hackable starter dashboard**.
+
+## What It Shows
 
 Your agent manages services across your home network. This dashboard shows their vital signs, streamed live via Server-Sent Events:
 
@@ -23,7 +34,7 @@ Your agent manages services across your home network. This dashboard shows their
 - **Cron Jobs** - Scheduled task overview with human-readable descriptions
 - **Log Viewer** - Tail view of pipeline and backup logs
 
-Every panel is included. Comment out what you don't need.
+The default setup covers one real home stack end to end. If you want to adapt it, the code is small enough to do that directly.
 
 ![OpenClaw Dashboard — Main tab showing Now Playing, Lights, Backups, and Agent Status](docs/screenshot.png)
 *Dark bioluminescent theme - slate with amber/cyan glow.*
@@ -39,6 +50,13 @@ python app.py
 ```
 
 Open `http://localhost:8080`.
+
+## Why This Repo Works
+
+- **Zero build step** - no npm, no bundler, no React layer to fight through
+- **Readable** - one Python app, static frontend, straightforward API polling
+- **Forkable** - easy to rename, retarget, and adapt to your own setup
+- **OpenClaw-native** - designed around the kinds of systems an agent actually monitors
 
 ## Make It Yours
 
@@ -73,6 +91,7 @@ Browser ──SSE──▶ FastAPI (uvicorn)
 
 - Missing or unconfigured services fail gracefully and show as offline/unavailable.
 - Default port is `8080`.
+- The fastest path is to clone it and tailor it to your own stack, not treat it like a shrink-wrapped product.
 
 ## License
 
